@@ -16,6 +16,7 @@ The name CIP is the circuit, not a standards process. This repository is the pub
 | `CONTRIBUTING.md` | A result has to run. Accept-only circuits are not tests. |
 | `docs/STATUS.md` | Gap list. This is the source of truth for "done". |
 | `docs/RESEARCH-RESULTS.md` | 2026-10-03 attempt. No circuit, so no testnet. |
+| `results/SOAK.md` | 600 s hash stand-in. Not a CIP proof. |
 
 Not in this tree, despite being named in the docs: `cip-combined`, `cip-merkle-test`, the protocol-logic simulator, a node, genesis, or CI. Do not treat those as implemented.
 
