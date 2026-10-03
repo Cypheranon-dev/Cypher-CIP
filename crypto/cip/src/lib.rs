@@ -1,28 +1,31 @@
-//! Four-statement CIP air, proved with Winterfell (FRI, no trusted setup).
+//! Spend circuit for one shielded note.
 //!
-//! Field: Goldilocks. Blowup 8, 84 queries, grinding 20, quadratic extension.
-//! Those four numbers are the §4.7 proposal. The hash in §4.7 is not.
+//! Hash: Poseidon2, Goldilocks, width 8, alpha 7, 8 full rounds and 22
+//! partial rounds. A digest is the first four lanes. That is Poseidon2.
+//! It is not the cubic gadget this circuit used before, and it is not
+//! Rescue-Prime. Winterfell's `Rp64_256` commitment hasher is the library
+//! hasher only.
 //!
-//! In-circuit hash: H(a, b) = a^3 + 3 b^3 + 7. The paper's name for that
-//! role is Poseidon2 (§4.4, §4.7). This gadget is not Poseidon2, and it is
-//! not collision-resistant. It is also not Rescue-Prime. Rescue-Prime is
-//! the name §4.7.1 uses for a toy circuit standing in for Poseidon2.
+//! The trace is 256 rows. Each permutation occupies 32 rows. Depth is 3
+//! (8 leaves). Amounts and the fee are range-checked to 32 bits, so the
+//! conservation constraint cannot wrap around the field.
 //!
-//! Winterfell's commitment hasher is Rp64_256. That is the library hasher.
-//! It is not the in-circuit hash, and it is not Poseidon2.
+//! What the proof binds:
+//!   the spent note is a leaf of the public note root
+//!   nullifier = Poseidon2(sk, rho, domain)
+//!   output note = Poseidon2(amount_out, sk, rho_out, domain)
+//!   amount_in = amount_out + fee, all under 2^32
+//!   event = Poseidon2(payload, height, previous block id, fee, domain)
 //!
-//! Statements inside the proof:
-//!   miner-set membership of pk = H(sk, 1) in the public miner root (depth 4)
-//!   nullifier = H(sk, r_in)
-//!   amount_in = amount_out + fee
-//!   event_id = H(H(payload, height), chain_state)
-//!
-//! "Nullifier not in the set" is a node check. A STARK cannot see the chain.
-//! The field `sk` is not a Dilithium secret. Dilithium signs the envelope
-//! outside this circuit.
+//! The nullifier set, the tree update, and the coinbase are node checks.
+//! A STARK cannot see the chain. The field `sk` is not a Dilithium key.
 
 pub mod poseidon2;
 
+use poseidon2::{
+    full_round, linear_layer, partial_round, step_flags, DOM_EVENT, DOM_NOTE, DOM_NULL, PAD_SLOT,
+    SLOT_ROWS,
+};
 use winterfell::crypto::{hashers::Rp64_256, DefaultRandomCoin, ElementHasher, MerkleTree};
 use winterfell::math::{fields::f64::BaseElement, FieldElement, ToElements};
 use winterfell::{
@@ -33,25 +36,54 @@ use winterfell::{
     TransitionConstraintDegree,
 };
 
-const TRACE_LEN: usize = 16;
-const WIDTH: usize = 13;
-const ACC: usize = 0;
-const SIB: usize = 1;
-const BIT: usize = 2;
-const SK: usize = 3;
-const RIN: usize = 4;
-const NULL: usize = 5;
-const AMT_IN: usize = 6;
-const AMT_OUT: usize = 7;
-const FEE: usize = 8;
-const HEIGHT: usize = 9;
-const PAYLOAD: usize = 10;
-const CHAIN: usize = 11;
-const EVENT: usize = 12;
-/// Domain separator so pk = H(sk, 1) is not the nullifier.
-const PK_DOMAIN: u64 = 1;
-/// Goldilocks prime modulus: 2^64 - 2^32 + 1.
+const TRACE_LEN: usize = 256;
+const DEPTH: usize = 3;
+pub const LEAVES: usize = 8;
+const AMOUNT_BITS: usize = 32;
+
+const STATE: usize = 0;
+const SK: usize = 8;
+const RIN: usize = 9;
+const AMT_IN: usize = 10;
+const AMT_OUT: usize = 11;
+const FEE: usize = 12;
+const HEIGHT: usize = 13;
+const PAYLOAD: usize = 14;
+const RHO: usize = 15;
+const CHAIN: usize = 16;
+const BIT: usize = 20;
+const SIB: usize = 23;
+const RANGE: usize = 35;
+const WIDTH: usize = 131;
+
+const ROOT_ROW: usize = 3 * SLOT_ROWS + (SLOT_ROWS - 1);
+const NULL_ROW: usize = 4 * SLOT_ROWS + (SLOT_ROWS - 1);
+const OUT_ROW: usize = 5 * SLOT_ROWS + (SLOT_ROWS - 1);
+const EVENT_ROW: usize = 6 * SLOT_ROWS + (SLOT_ROWS - 1);
+
+const P_LINEAR: usize = 0;
+const P_FULL: usize = 1;
+const P_PARTIAL: usize = 2;
+const P_PAD: usize = 3;
+const P_ROW0: usize = 4;
+const P_BOUNDARY: usize = 5;
+const P_RC: usize = 12;
+
+const N_STATE: usize = 8;
+const N_ROW0: usize = 8;
+const N_CONST: usize = WIDTH - 8;
+const N_PATH_BOOL: usize = DEPTH;
+const N_RANGE_BOOL: usize = AMOUNT_BITS * 3;
+const N_RANGE_SUM: usize = 3;
+const N_CONSTRAINTS: usize =
+    N_STATE + N_ROW0 + N_CONST + N_PATH_BOOL + N_RANGE_BOOL + N_RANGE_SUM + 1;
+const N_ASSERTIONS: usize = 23;
+
+/// Little-endian public inputs. 4-element digests, then scalars.
+pub const PUBLIC_LEN: usize = 23;
 const GOLDILOCKS_MODULUS: u64 = 0xffff_ffff_0000_0001;
+
+pub type Digest = [BaseElement; 4];
 
 pub fn fe(value: u64) -> BaseElement {
     BaseElement::new(value)
@@ -64,50 +96,168 @@ fn checked_fe(value: u64) -> Result<BaseElement, &'static str> {
     Ok(fe(value))
 }
 
-fn h2(a: BaseElement, b: BaseElement) -> BaseElement {
-    a.cube() + b.cube() * fe(3) + fe(7)
+fn fit_u32(value: u64) -> Result<u64, &'static str> {
+    if value >= 1u64 << AMOUNT_BITS {
+        return Err("amount exceeds 2^32");
+    }
+    Ok(value)
 }
 
-fn h2e<E: FieldElement<BaseField = BaseElement>>(a: E, b: E) -> E {
-    let three = E::from(3u32);
-    let seven = E::from(7u32);
-    a.cube() + b.cube() * three + seven
+fn take4(state: [BaseElement; 8]) -> Digest {
+    [state[0], state[1], state[2], state[3]]
 }
 
-pub fn public_key(sk: u64) -> BaseElement {
-    h2(fe(sk), fe(PK_DOMAIN))
+pub fn digest_words(digest: Digest) -> [u64; 4] {
+    digest.map(|element| element.as_int())
+}
+
+pub fn digest_from_words(words: [u64; 4]) -> Result<Digest, &'static str> {
+    Ok([
+        checked_fe(words[0])?,
+        checked_fe(words[1])?,
+        checked_fe(words[2])?,
+        checked_fe(words[3])?,
+    ])
+}
+
+pub fn root_words(leaves: &[[u64; 4]; LEAVES]) -> Result<[u64; 4], &'static str> {
+    let mut digests = [[BaseElement::ZERO; 4]; LEAVES];
+    for (dst, src) in digests.iter_mut().zip(leaves) {
+        *dst = digest_from_words(*src)?;
+    }
+    Ok(digest_words(merkle_root(&digests)))
+}
+
+/// Note commitment. `rho` is the note randomness. The same function opens
+/// an output note, so a spend of it uses this digest as the leaf.
+pub fn note_commitment(amount: u64, sk: u64, rho: u64) -> Result<Digest, &'static str> {
+    let _ = fit_u32(amount)?;
+    let state = [
+        checked_fe(amount)?,
+        checked_fe(sk)?,
+        checked_fe(rho)?,
+        fe(DOM_NOTE),
+        BaseElement::ZERO,
+        BaseElement::ZERO,
+        BaseElement::ZERO,
+        BaseElement::ZERO,
+    ];
+    Ok(take4(poseidon2::permute(state)))
+}
+
+pub fn nullifier_of(sk: u64, rho: u64) -> Result<Digest, &'static str> {
+    let state = [
+        checked_fe(sk)?,
+        checked_fe(rho)?,
+        fe(DOM_NULL),
+        BaseElement::ZERO,
+        BaseElement::ZERO,
+        BaseElement::ZERO,
+        BaseElement::ZERO,
+        BaseElement::ZERO,
+    ];
+    Ok(take4(poseidon2::permute(state)))
+}
+
+/// Event digest over the public header fields the node recomputes.
+pub fn event_digest(
+    payload: u64,
+    height: u64,
+    chain: [u64; 4],
+    fee: u64,
+) -> Result<Digest, &'static str> {
+    let _ = fit_u32(fee)?;
+    let state = [
+        checked_fe(payload)?,
+        checked_fe(height)?,
+        checked_fe(chain[0])?,
+        checked_fe(chain[1])?,
+        checked_fe(chain[2])?,
+        checked_fe(chain[3])?,
+        checked_fe(fee)?,
+        fe(DOM_EVENT),
+    ];
+    Ok(take4(poseidon2::permute(state)))
+}
+
+fn parent(left: Digest, right: Digest) -> Digest {
+    let state = [
+        left[0], left[1], left[2], left[3], right[0], right[1], right[2], right[3],
+    ];
+    take4(poseidon2::permute(state))
+}
+
+pub fn merkle_root(leaves: &[Digest; LEAVES]) -> Digest {
+    let mut level = leaves.to_vec();
+    while level.len() > 1 {
+        let mut next = Vec::with_capacity(level.len() / 2);
+        for pair in level.chunks(2) {
+            next.push(parent(pair[0], pair[1]));
+        }
+        level = next;
+    }
+    level[0]
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PublicInputs {
-    pub miner_root: BaseElement,
-    pub nullifier: BaseElement,
-    pub event_id: BaseElement,
+    pub note_root: Digest,
+    pub nullifier: Digest,
+    pub output: Digest,
+    pub event_id: Digest,
     pub height: BaseElement,
+    pub fee: BaseElement,
+    pub payload: BaseElement,
+    pub chain_state: Digest,
 }
 
 impl ToElements<BaseElement> for PublicInputs {
     fn to_elements(&self) -> Vec<BaseElement> {
-        vec![self.miner_root, self.nullifier, self.event_id, self.height]
+        let mut out = Vec::with_capacity(PUBLIC_LEN);
+        out.extend_from_slice(&self.note_root);
+        out.extend_from_slice(&self.nullifier);
+        out.extend_from_slice(&self.output);
+        out.extend_from_slice(&self.event_id);
+        out.push(self.height);
+        out.push(self.fee);
+        out.push(self.payload);
+        out.extend_from_slice(&self.chain_state);
+        out
     }
 }
 
 impl PublicInputs {
-    pub fn to_u64s(&self) -> [u64; 4] {
-        [
-            self.miner_root.as_int(),
-            self.nullifier.as_int(),
-            self.event_id.as_int(),
-            self.height.as_int(),
-        ]
+    pub fn to_u64s(&self) -> [u64; PUBLIC_LEN] {
+        let mut out = [0u64; PUBLIC_LEN];
+        out[0..4].copy_from_slice(&digest_words(self.note_root));
+        out[4..8].copy_from_slice(&digest_words(self.nullifier));
+        out[8..12].copy_from_slice(&digest_words(self.output));
+        out[12..16].copy_from_slice(&digest_words(self.event_id));
+        out[16] = self.height.as_int();
+        out[17] = self.fee.as_int();
+        out[18] = self.payload.as_int();
+        out[19..23].copy_from_slice(&digest_words(self.chain_state));
+        out
     }
 
-    pub fn try_from_u64s(values: [u64; 4]) -> Result<Self, &'static str> {
+    pub fn try_from_u64s(values: [u64; PUBLIC_LEN]) -> Result<Self, &'static str> {
+        let digest = |start: usize| -> Result<Digest, &'static str> {
+            Ok([
+                checked_fe(values[start])?,
+                checked_fe(values[start + 1])?,
+                checked_fe(values[start + 2])?,
+                checked_fe(values[start + 3])?,
+            ])
+        };
         Ok(Self {
-            miner_root: checked_fe(values[0])?,
-            nullifier: checked_fe(values[1])?,
-            event_id: checked_fe(values[2])?,
-            height: checked_fe(values[3])?,
+            note_root: digest(0)?,
+            nullifier: digest(4)?,
+            output: digest(8)?,
+            event_id: digest(12)?,
+            height: checked_fe(values[16])?,
+            fee: checked_fe(fit_u32(values[17])?)?,
+            payload: checked_fe(values[18])?,
+            chain_state: digest(19)?,
         })
     }
 }
@@ -116,58 +266,62 @@ impl PublicInputs {
 pub struct Witness {
     pub sk: u64,
     pub r_in: u64,
+    pub rho_out: u64,
     pub amount_in: u64,
     pub amount_out: u64,
     pub fee: u64,
     pub height: u64,
     pub payload: u64,
-    pub chain_state: u64,
+    pub chain_state: [u64; 4],
     pub index: usize,
-    pub leaves: [u64; 16],
+    pub leaves: [[u64; 4]; LEAVES],
 }
 
-pub struct Prepared {
-    pub public: PublicInputs,
-    siblings: [BaseElement; 4],
-    bits: [BaseElement; 4],
-    leaf: BaseElement,
+struct Prepared {
+    public: PublicInputs,
     sk: BaseElement,
     r_in: BaseElement,
+    rho_out: BaseElement,
     amount_in: BaseElement,
     amount_out: BaseElement,
     fee: BaseElement,
     height: BaseElement,
     payload: BaseElement,
-    chain_state: BaseElement,
+    chain_state: Digest,
+    siblings: [Digest; DEPTH],
+    bits: [BaseElement; DEPTH],
 }
 
-pub fn prepare(witness: &Witness) -> Result<Prepared, &'static str> {
-    if witness.index >= 16 {
-        return Err("miner index out of range");
+pub fn prepare(witness: &Witness) -> Result<PublicInputs, &'static str> {
+    Ok(prepare_inner(witness)?.public)
+}
+
+fn prepare_inner(witness: &Witness) -> Result<Prepared, &'static str> {
+    if witness.index >= LEAVES {
+        return Err("note index out of range");
     }
-    let expected_amount_in = witness
-        .amount_out
-        .checked_add(witness.fee)
-        .ok_or("amount overflow")?;
-    if witness.amount_in != expected_amount_in {
+    let amount_in = fit_u32(witness.amount_in)?;
+    let amount_out = fit_u32(witness.amount_out)?;
+    let fee = fit_u32(witness.fee)?;
+    let expected = amount_out.checked_add(fee).ok_or("amount overflow")?;
+    if amount_in != expected {
         return Err("amounts do not conserve");
     }
-    let sk = checked_fe(witness.sk)?;
-    let pk = h2(sk, checked_fe(PK_DOMAIN)?);
-    let mut checked_leaves = [BaseElement::ZERO; 16];
-    for (dst, value) in checked_leaves.iter_mut().zip(witness.leaves) {
-        *dst = checked_fe(value)?;
+    let note = note_commitment(amount_in, witness.sk, witness.r_in)?;
+    let mut leaves = [[BaseElement::ZERO; 4]; LEAVES];
+    for (dst, src) in leaves.iter_mut().zip(witness.leaves) {
+        for lane in 0..4 {
+            dst[lane] = checked_fe(src[lane])?;
+        }
     }
-    let leaves = checked_leaves;
-    if leaves[witness.index] != pk {
-        return Err("miner leaf is not H(sk, 1)");
+    if leaves[witness.index] != note {
+        return Err("note leaf is not the spent commitment");
     }
-    let leaf = leaves[witness.index];
     let mut level = leaves.to_vec();
-    let mut siblings = [fe(0); 4];
-    let mut bits = [fe(0); 4];
+    let mut siblings = [[BaseElement::ZERO; 4]; DEPTH];
+    let mut bits = [BaseElement::ZERO; DEPTH];
     let mut idx = witness.index;
-    for depth in 0..4 {
+    for depth in 0..DEPTH {
         let sibling = if idx.is_multiple_of(2) {
             level[idx + 1]
         } else {
@@ -181,33 +335,40 @@ pub fn prepare(witness: &Witness) -> Result<Prepared, &'static str> {
         };
         let mut next = Vec::with_capacity(level.len() / 2);
         for pair in level.chunks(2) {
-            next.push(h2(pair[0], pair[1]));
+            next.push(parent(pair[0], pair[1]));
         }
         level = next;
         idx /= 2;
     }
-    let r_in = checked_fe(witness.r_in)?;
-    let payload = checked_fe(witness.payload)?;
-    let height = checked_fe(witness.height)?;
-    let chain_state = checked_fe(witness.chain_state)?;
+    let chain_state = [
+        checked_fe(witness.chain_state[0])?,
+        checked_fe(witness.chain_state[1])?,
+        checked_fe(witness.chain_state[2])?,
+        checked_fe(witness.chain_state[3])?,
+    ];
+    let event_id = event_digest(witness.payload, witness.height, witness.chain_state, fee)?;
     Ok(Prepared {
         public: PublicInputs {
-            miner_root: level[0],
-            nullifier: h2(sk, r_in),
-            event_id: h2(h2(payload, height), chain_state),
-            height,
+            note_root: level[0],
+            nullifier: nullifier_of(witness.sk, witness.r_in)?,
+            output: note_commitment(amount_out, witness.sk, witness.rho_out)?,
+            event_id,
+            height: checked_fe(witness.height)?,
+            fee: fe(fee),
+            payload: checked_fe(witness.payload)?,
+            chain_state,
         },
+        sk: checked_fe(witness.sk)?,
+        r_in: checked_fe(witness.r_in)?,
+        rho_out: checked_fe(witness.rho_out)?,
+        amount_in: fe(amount_in),
+        amount_out: fe(amount_out),
+        fee: fe(fee),
+        height: checked_fe(witness.height)?,
+        payload: checked_fe(witness.payload)?,
+        chain_state,
         siblings,
         bits,
-        leaf,
-        sk,
-        r_in,
-        amount_in: checked_fe(witness.amount_in)?,
-        amount_out: checked_fe(witness.amount_out)?,
-        fee: checked_fe(witness.fee)?,
-        height,
-        payload,
-        chain_state,
     })
 }
 
@@ -224,6 +385,191 @@ pub fn proof_options() -> ProofOptions {
     )
 }
 
+struct Sel<E: FieldElement> {
+    linear: E,
+    full: E,
+    partial: E,
+    pad: E,
+    boundary: [E; 7],
+    rc: [E; 8],
+}
+
+fn merkle_load<E: FieldElement>(acc: [E; 4], sib: [E; 4], bit: E) -> [E; 8] {
+    let one = E::ONE;
+    let mut out = [E::ZERO; 8];
+    for lane in 0..4 {
+        out[lane] = bit * sib[lane] + (one - bit) * acc[lane];
+        out[4 + lane] = bit * acc[lane] + (one - bit) * sib[lane];
+    }
+    out
+}
+
+fn boundaries<E: FieldElement<BaseField = BaseElement>>(cur: &[E]) -> [[E; 8]; 7] {
+    let mut out = [[E::ZERO; 8]; 7];
+    for depth in 0..DEPTH {
+        let acc = [cur[STATE], cur[STATE + 1], cur[STATE + 2], cur[STATE + 3]];
+        let sib = [
+            cur[SIB + depth * 4],
+            cur[SIB + depth * 4 + 1],
+            cur[SIB + depth * 4 + 2],
+            cur[SIB + depth * 4 + 3],
+        ];
+        out[depth] = merkle_load(acc, sib, cur[BIT + depth]);
+    }
+    out[3] = [
+        cur[SK],
+        cur[RIN],
+        E::from(fe(DOM_NULL)),
+        E::ZERO,
+        E::ZERO,
+        E::ZERO,
+        E::ZERO,
+        E::ZERO,
+    ];
+    out[4] = [
+        cur[AMT_OUT],
+        cur[SK],
+        cur[RHO],
+        E::from(fe(DOM_NOTE)),
+        E::ZERO,
+        E::ZERO,
+        E::ZERO,
+        E::ZERO,
+    ];
+    out[5] = [
+        cur[PAYLOAD],
+        cur[HEIGHT],
+        cur[CHAIN],
+        cur[CHAIN + 1],
+        cur[CHAIN + 2],
+        cur[CHAIN + 3],
+        cur[FEE],
+        E::from(fe(DOM_EVENT)),
+    ];
+    out
+}
+
+fn transition<E: FieldElement<BaseField = BaseElement>>(cur: &[E], sel: &Sel<E>) -> [E; 8] {
+    let state = [
+        cur[0], cur[1], cur[2], cur[3], cur[4], cur[5], cur[6], cur[7],
+    ];
+    let linear = linear_layer(state);
+    let full = full_round(state, sel.rc);
+    let partial = partial_round(state, sel.rc[0]);
+    let loads = boundaries(cur);
+    let mut out = [E::ZERO; 8];
+    for lane in 0..8 {
+        out[lane] = sel.linear * linear[lane]
+            + sel.full * full[lane]
+            + sel.partial * partial[lane]
+            + sel.pad * state[lane];
+        for (boundary, load) in loads.iter().enumerate() {
+            out[lane] += sel.boundary[boundary] * load[lane];
+        }
+    }
+    out
+}
+
+fn constraint_degrees() -> Vec<TransitionConstraintDegree> {
+    let mut degrees = Vec::with_capacity(N_CONSTRAINTS);
+    let round = TransitionConstraintDegree::with_cycles(7, vec![TRACE_LEN]);
+    let flagged = TransitionConstraintDegree::with_cycles(1, vec![TRACE_LEN]);
+    for _ in 0..N_STATE {
+        degrees.push(round.clone());
+    }
+    for _ in 0..N_ROW0 {
+        degrees.push(flagged.clone());
+    }
+    for _ in 0..N_CONST {
+        degrees.push(TransitionConstraintDegree::new(1));
+    }
+    for _ in 0..N_PATH_BOOL + N_RANGE_BOOL {
+        degrees.push(TransitionConstraintDegree::new(2));
+    }
+    for _ in 0..N_RANGE_SUM + 1 {
+        degrees.push(TransitionConstraintDegree::new(1));
+    }
+    degrees
+}
+
+fn write_bits(row: &mut [BaseElement], offset: usize, value: u64) {
+    for bit in 0..AMOUNT_BITS {
+        row[RANGE + offset + bit] = if (value >> bit) & 1 == 1 {
+            BaseElement::ONE
+        } else {
+            BaseElement::ZERO
+        };
+    }
+}
+
+fn fill_row(row: &mut [BaseElement], prep: &Prepared, state: [BaseElement; 8]) {
+    row[..8].copy_from_slice(&state);
+    row[SK] = prep.sk;
+    row[RIN] = prep.r_in;
+    row[AMT_IN] = prep.amount_in;
+    row[AMT_OUT] = prep.amount_out;
+    row[FEE] = prep.fee;
+    row[HEIGHT] = prep.height;
+    row[PAYLOAD] = prep.payload;
+    row[RHO] = prep.rho_out;
+    row[CHAIN..CHAIN + 4].copy_from_slice(&prep.chain_state);
+    for depth in 0..DEPTH {
+        row[BIT + depth] = prep.bits[depth];
+        row[SIB + depth * 4..SIB + depth * 4 + 4].copy_from_slice(&prep.siblings[depth]);
+    }
+    write_bits(row, 0, prep.amount_in.as_int());
+    write_bits(row, AMOUNT_BITS, prep.amount_out.as_int());
+    write_bits(row, AMOUNT_BITS * 2, prep.fee.as_int());
+}
+
+fn fill_trace(prep: &Prepared) -> TraceTable<BaseElement> {
+    let mut trace = TraceTable::new(WIDTH, TRACE_LEN);
+    let preimage = [
+        prep.amount_in,
+        prep.sk,
+        prep.r_in,
+        fe(DOM_NOTE),
+        BaseElement::ZERO,
+        BaseElement::ZERO,
+        BaseElement::ZERO,
+        BaseElement::ZERO,
+    ];
+    trace.fill(
+        |row| fill_row(row, prep, preimage),
+        |step, row| {
+            let flags = step_flags(step);
+            let sel = Sel {
+                linear: flag(flags.linear),
+                full: flag(flags.full),
+                partial: flag(flags.partial),
+                pad: flag(flags.pad),
+                boundary: flags.boundary.map(flag),
+                rc: flags.rc.map(fe),
+            };
+            let next = transition(row, &sel);
+            fill_row(row, prep, next);
+        },
+    );
+    trace
+}
+
+fn flag(on: bool) -> BaseElement {
+    if on {
+        BaseElement::ONE
+    } else {
+        BaseElement::ZERO
+    }
+}
+
+fn digest_at(trace: &TraceTable<BaseElement>, row: usize) -> Digest {
+    [
+        trace.get(0, row),
+        trace.get(1, row),
+        trace.get(2, row),
+        trace.get(3, row),
+    ]
+}
+
 pub struct CipAir {
     context: AirContext<BaseElement>,
     public: PublicInputs,
@@ -235,27 +581,11 @@ impl Air for CipAir {
 
     fn new(trace_info: TraceInfo, public: Self::PublicInputs, options: ProofOptions) -> Self {
         assert_eq!(WIDTH, trace_info.width());
-        // Degrees are the ones this AIR actually produces. sk, the amounts, and the
-        // event preimage are constant columns, so those cubes do not add degree.
-        // Winterfell checks the declared degree exactly.
-        let degrees = vec![
-            TransitionConstraintDegree::with_cycles(4, vec![TRACE_LEN]),
-            TransitionConstraintDegree::with_cycles(1, vec![TRACE_LEN]),
-            TransitionConstraintDegree::with_cycles(1, vec![TRACE_LEN]),
-            TransitionConstraintDegree::new(1),
-            TransitionConstraintDegree::new(1),
-            TransitionConstraintDegree::new(1),
-            TransitionConstraintDegree::new(1),
-            TransitionConstraintDegree::new(1),
-            TransitionConstraintDegree::new(1),
-            TransitionConstraintDegree::new(1),
-            TransitionConstraintDegree::new(1),
-            TransitionConstraintDegree::new(2),
-            TransitionConstraintDegree::new(1),
-            TransitionConstraintDegree::with_cycles(1, vec![TRACE_LEN]),
-        ];
+        assert_eq!(TRACE_LEN, trace_info.length());
+        let degrees = constraint_degrees();
+        assert_eq!(degrees.len(), N_CONSTRAINTS);
         Self {
-            context: AirContext::new(trace_info, degrees, 4, options),
+            context: AirContext::new(trace_info, degrees, N_ASSERTIONS, options),
             public,
         }
     }
@@ -265,17 +595,22 @@ impl Air for CipAir {
     }
 
     fn get_periodic_column_values(&self) -> Vec<Vec<BaseElement>> {
-        let mut merkle = vec![BaseElement::ZERO; TRACE_LEN];
-        let mut null_step = vec![BaseElement::ZERO; TRACE_LEN];
-        let mut event_step = vec![BaseElement::ZERO; TRACE_LEN];
-        let mut pk_step = vec![BaseElement::ZERO; TRACE_LEN];
-        for step in merkle.iter_mut().take(4) {
-            *step = BaseElement::ONE;
+        let mut columns = vec![vec![BaseElement::ZERO; TRACE_LEN]; P_RC + 8];
+        for (step, flags) in (0..TRACE_LEN).map(step_flags).enumerate() {
+            columns[P_LINEAR][step] = flag(flags.linear);
+            columns[P_FULL][step] = flag(flags.full);
+            columns[P_PARTIAL][step] = flag(flags.partial);
+            columns[P_PAD][step] = flag(flags.pad);
+            columns[P_ROW0][step] = flag(flags.row0);
+            for (lane, on) in flags.boundary.iter().enumerate() {
+                columns[P_BOUNDARY + lane][step] = flag(*on);
+            }
+            for (lane, rc) in flags.rc.iter().enumerate() {
+                columns[P_RC + lane][step] = fe(*rc);
+            }
         }
-        null_step[4] = BaseElement::ONE;
-        event_step[5] = BaseElement::ONE;
-        pk_step[0] = BaseElement::ONE;
-        vec![merkle, null_step, event_step, pk_step]
+        let _ = PAD_SLOT;
+        columns
     }
 
     fn evaluate_transition<E: FieldElement<BaseField = Self::BaseField>>(
@@ -286,44 +621,103 @@ impl Air for CipAir {
     ) {
         let cur = frame.current();
         let next = frame.next();
-        let one = E::ONE;
-        let merkle = periodic[0];
-        let null_step = periodic[1];
-        let event_step = periodic[2];
-        let pk_step = periodic[3];
-        let ordered = {
-            let straight = h2e(cur[ACC], cur[SIB]);
-            let swapped = h2e(cur[SIB], cur[ACC]);
-            cur[BIT] * swapped + (one - cur[BIT]) * straight
+        let sel = Sel {
+            linear: periodic[P_LINEAR],
+            full: periodic[P_FULL],
+            partial: periodic[P_PARTIAL],
+            pad: periodic[P_PAD],
+            boundary: [
+                periodic[P_BOUNDARY],
+                periodic[P_BOUNDARY + 1],
+                periodic[P_BOUNDARY + 2],
+                periodic[P_BOUNDARY + 3],
+                periodic[P_BOUNDARY + 4],
+                periodic[P_BOUNDARY + 5],
+                periodic[P_BOUNDARY + 6],
+            ],
+            rc: [
+                periodic[P_RC],
+                periodic[P_RC + 1],
+                periodic[P_RC + 2],
+                periodic[P_RC + 3],
+                periodic[P_RC + 4],
+                periodic[P_RC + 5],
+                periodic[P_RC + 6],
+                periodic[P_RC + 7],
+            ],
         };
-        result[0] = merkle * (next[ACC] - ordered) + (one - merkle) * (next[ACC] - cur[ACC]);
-        let nullifier = h2e(cur[SK], cur[RIN]);
-        result[1] =
-            null_step * (next[NULL] - nullifier) + (one - null_step) * (next[NULL] - cur[NULL]);
-        let event = h2e(h2e(cur[PAYLOAD], cur[HEIGHT]), cur[CHAIN]);
-        result[2] =
-            event_step * (next[EVENT] - event) + (one - event_step) * (next[EVENT] - cur[EVENT]);
-        result[3] = next[SK] - cur[SK];
-        result[4] = next[RIN] - cur[RIN];
-        result[5] = next[AMT_IN] - cur[AMT_IN];
-        result[6] = next[AMT_OUT] - cur[AMT_OUT];
-        result[7] = next[FEE] - cur[FEE];
-        result[8] = next[HEIGHT] - cur[HEIGHT];
-        result[9] = next[PAYLOAD] - cur[PAYLOAD];
-        result[10] = next[CHAIN] - cur[CHAIN];
-        result[11] = cur[BIT] * (cur[BIT] - one);
-        result[12] = cur[AMT_IN] - cur[AMT_OUT] - cur[FEE];
-        let pk = h2e(cur[SK], E::from(fe(PK_DOMAIN)));
-        result[13] = pk_step * (cur[ACC] - pk);
+        let expected = transition(cur, &sel);
+        let mut index = 0;
+        for lane in 0..8 {
+            result[index] = next[lane] - expected[lane];
+            index += 1;
+        }
+        let preimage = [
+            cur[AMT_IN],
+            cur[SK],
+            cur[RIN],
+            E::from(fe(DOM_NOTE)),
+            E::ZERO,
+            E::ZERO,
+            E::ZERO,
+            E::ZERO,
+        ];
+        for lane in 0..8 {
+            result[index] = periodic[P_ROW0] * (cur[lane] - preimage[lane]);
+            index += 1;
+        }
+        for column in 8..WIDTH {
+            result[index] = next[column] - cur[column];
+            index += 1;
+        }
+        let one = E::ONE;
+        for depth in 0..DEPTH {
+            let bit = cur[BIT + depth];
+            result[index] = bit * (bit - one);
+            index += 1;
+        }
+        for bit_index in 0..N_RANGE_BOOL {
+            let bit = cur[RANGE + bit_index];
+            result[index] = bit * (bit - one);
+            index += 1;
+        }
+        for (offset, column) in [(0, AMT_IN), (AMOUNT_BITS, AMT_OUT), (AMOUNT_BITS * 2, FEE)] {
+            let mut acc = E::ZERO;
+            let mut place = E::ONE;
+            for bit_index in 0..AMOUNT_BITS {
+                acc += cur[RANGE + offset + bit_index] * place;
+                place = place.double();
+            }
+            result[index] = cur[column] - acc;
+            index += 1;
+        }
+        result[index] = cur[AMT_IN] - cur[AMT_OUT] - cur[FEE];
+        debug_assert_eq!(index + 1, N_CONSTRAINTS);
     }
 
     fn get_assertions(&self) -> Vec<Assertion<BaseElement>> {
-        vec![
-            Assertion::single(ACC, 4, self.public.miner_root),
-            Assertion::single(NULL, 5, self.public.nullifier),
-            Assertion::single(EVENT, 6, self.public.event_id),
-            Assertion::single(HEIGHT, 0, self.public.height),
-        ]
+        let mut assertions = Vec::with_capacity(N_ASSERTIONS);
+        let bind = |assertions: &mut Vec<Assertion<BaseElement>>, row: usize, digest: Digest| {
+            for (lane, element) in digest.iter().enumerate() {
+                assertions.push(Assertion::single(lane, row, *element));
+            }
+        };
+        bind(&mut assertions, ROOT_ROW, self.public.note_root);
+        bind(&mut assertions, NULL_ROW, self.public.nullifier);
+        bind(&mut assertions, OUT_ROW, self.public.output);
+        bind(&mut assertions, EVENT_ROW, self.public.event_id);
+        assertions.push(Assertion::single(HEIGHT, 0, self.public.height));
+        assertions.push(Assertion::single(FEE, 0, self.public.fee));
+        assertions.push(Assertion::single(PAYLOAD, 0, self.public.payload));
+        for lane in 0..4 {
+            assertions.push(Assertion::single(
+                CHAIN + lane,
+                0,
+                self.public.chain_state[lane],
+            ));
+        }
+        assert_eq!(assertions.len(), N_ASSERTIONS);
+        assertions
     }
 }
 
@@ -333,56 +727,11 @@ pub struct CipProver {
 }
 
 impl CipProver {
-    pub fn new(prepared: Prepared) -> Self {
+    fn new(prepared: Prepared) -> Self {
         Self {
             options: proof_options(),
             prepared,
         }
-    }
-
-    fn build_trace(&self) -> TraceTable<BaseElement> {
-        let prep = &self.prepared;
-        let mut trace = TraceTable::new(WIDTH, TRACE_LEN);
-        trace.fill(
-            |state| {
-                state[ACC] = prep.leaf;
-                state[SIB] = prep.siblings[0];
-                state[BIT] = prep.bits[0];
-                state[SK] = prep.sk;
-                state[RIN] = prep.r_in;
-                state[NULL] = BaseElement::ZERO;
-                state[AMT_IN] = prep.amount_in;
-                state[AMT_OUT] = prep.amount_out;
-                state[FEE] = prep.fee;
-                state[HEIGHT] = prep.height;
-                state[PAYLOAD] = prep.payload;
-                state[CHAIN] = prep.chain_state;
-                state[EVENT] = BaseElement::ZERO;
-            },
-            |step, state| {
-                if step < 4 {
-                    let bit = state[BIT];
-                    let acc = state[ACC];
-                    let sib = state[SIB];
-                    state[ACC] = if bit == BaseElement::ONE {
-                        h2(sib, acc)
-                    } else {
-                        h2(acc, sib)
-                    };
-                    if step + 1 < 4 {
-                        state[SIB] = prep.siblings[step + 1];
-                        state[BIT] = prep.bits[step + 1];
-                    }
-                }
-                if step == 4 {
-                    state[NULL] = h2(state[SK], state[RIN]);
-                }
-                if step == 5 {
-                    state[EVENT] = h2(h2(state[PAYLOAD], state[HEIGHT]), state[CHAIN]);
-                }
-            },
-        );
-        trace
     }
 }
 
@@ -402,10 +751,19 @@ impl Prover for CipProver {
 
     fn get_pub_inputs(&self, trace: &Self::Trace) -> PublicInputs {
         PublicInputs {
-            miner_root: trace.get(ACC, 4),
-            nullifier: trace.get(NULL, 5),
-            event_id: trace.get(EVENT, 6),
+            note_root: digest_at(trace, ROOT_ROW),
+            nullifier: digest_at(trace, NULL_ROW),
+            output: digest_at(trace, OUT_ROW),
+            event_id: digest_at(trace, EVENT_ROW),
             height: trace.get(HEIGHT, 0),
+            fee: trace.get(FEE, 0),
+            payload: trace.get(PAYLOAD, 0),
+            chain_state: [
+                trace.get(CHAIN, 0),
+                trace.get(CHAIN + 1, 0),
+                trace.get(CHAIN + 2, 0),
+                trace.get(CHAIN + 3, 0),
+            ],
         }
     }
 
@@ -449,10 +807,14 @@ impl Prover for CipProver {
 }
 
 pub fn prove(witness: &Witness) -> Result<(Proof, PublicInputs), &'static str> {
-    let prepared = prepare(witness)?;
+    let prepared = prepare_inner(witness)?;
     let public = prepared.public.clone();
     let prover = CipProver::new(prepared);
-    let trace = prover.build_trace();
+    let trace = fill_trace(&prover.prepared);
+    let traced = prover.get_pub_inputs(&trace);
+    if traced != public {
+        return Err("trace does not match public inputs");
+    }
     let proof = prover.prove(trace).map_err(|_| "proof generation failed")?;
     Ok((proof, public))
 }
@@ -481,20 +843,65 @@ mod tests {
     use super::*;
 
     fn sample() -> Witness {
-        let mut leaves = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
-        leaves[3] = public_key(11).as_int();
+        let sk = 11;
+        let rho = 22;
+        let note = digest_words(note_commitment(10, sk, rho).unwrap());
+        let mut leaves = [[0u64; 4]; LEAVES];
+        leaves[3] = note;
         Witness {
-            sk: 11,
-            r_in: 22,
+            sk,
+            r_in: rho,
+            rho_out: 77,
             amount_in: 10,
             amount_out: 9,
             fee: 1,
             height: 7,
             payload: 99,
-            chain_state: 5,
+            chain_state: [1, 2, 3, 4],
             index: 3,
             leaves,
         }
+    }
+
+    #[test]
+    fn flags_cover_every_row_once() {
+        for step in 0..TRACE_LEN {
+            let flags = step_flags(step);
+            let kinds = flags.linear as u8
+                + flags.full as u8
+                + flags.partial as u8
+                + flags.pad as u8
+                + flags.boundary.iter().filter(|on| **on).count() as u8;
+            assert_eq!(kinds, 1, "step {step}");
+        }
+    }
+
+    #[test]
+    fn trace_satisfies_every_constraint() {
+        let prepared = prepare_inner(&sample()).expect("prepare");
+        let trace = fill_trace(&prepared);
+        let info = TraceInfo::new(WIDTH, TRACE_LEN);
+        let air = CipAir::new(info, prepared.public.clone(), proof_options());
+        let periodic = air.get_periodic_column_values();
+        for step in 0..TRACE_LEN - 1 {
+            let mut current = Vec::with_capacity(WIDTH);
+            let mut next = Vec::with_capacity(WIDTH);
+            for column in 0..WIDTH {
+                current.push(trace.get(column, step));
+                next.push(trace.get(column, step + 1));
+            }
+            let flags: Vec<BaseElement> = periodic.iter().map(|column| column[step]).collect();
+            let frame = EvaluationFrame::from_rows(current, next);
+            let mut result = vec![BaseElement::ZERO; N_CONSTRAINTS];
+            air.evaluate_transition(&frame, &flags, &mut result);
+            for (index, value) in result.iter().enumerate() {
+                assert_eq!(*value, BaseElement::ZERO, "step {step} constraint {index}");
+            }
+        }
+        assert_eq!(digest_at(&trace, ROOT_ROW), prepared.public.note_root);
+        assert_eq!(digest_at(&trace, NULL_ROW), prepared.public.nullifier);
+        assert_eq!(digest_at(&trace, OUT_ROW), prepared.public.output);
+        assert_eq!(digest_at(&trace, EVENT_ROW), prepared.public.event_id);
     }
 
     #[test]
@@ -510,8 +917,8 @@ mod tests {
         let witness = sample();
         let (proof, public) = prove(&witness).expect("prove");
         verify(proof.clone(), public.clone()).expect("verify");
-        let mut wrong = public.clone();
-        wrong.nullifier += BaseElement::ONE;
+        let mut wrong = public;
+        wrong.nullifier[0] += BaseElement::ONE;
         assert!(verify(proof, wrong).is_err());
     }
 
@@ -519,7 +926,7 @@ mod tests {
     fn rejects_unbalanced_amounts_before_proving() {
         let mut witness = sample();
         witness.fee = 0;
-        assert!(prepare(&witness).is_err());
+        assert_eq!(prepare(&witness).err(), Some("amounts do not conserve"));
     }
 
     #[test]
@@ -527,7 +934,9 @@ mod tests {
         let mut witness = sample();
         witness.sk = GOLDILOCKS_MODULUS;
         assert_eq!(prepare(&witness).err(), Some("non-canonical field element"));
-        assert!(PublicInputs::try_from_u64s([GOLDILOCKS_MODULUS, 0, 0, 0]).is_err());
+        let mut words = [0u64; PUBLIC_LEN];
+        words[0] = GOLDILOCKS_MODULUS;
+        assert!(PublicInputs::try_from_u64s(words).is_err());
     }
 
     #[test]
@@ -536,13 +945,16 @@ mod tests {
         witness.amount_in = 0;
         witness.amount_out = u64::MAX;
         witness.fee = 1;
-        assert_eq!(prepare(&witness).err(), Some("amount overflow"));
+        assert_eq!(prepare(&witness).err(), Some("amount exceeds 2^32"));
     }
 
     #[test]
-    fn rejects_a_leaf_that_is_not_the_public_key() {
+    fn rejects_a_leaf_that_is_not_the_note() {
         let mut witness = sample();
-        witness.leaves[3] ^= 1;
-        assert_eq!(prepare(&witness).err(), Some("miner leaf is not H(sk, 1)"));
+        witness.leaves[3][0] ^= 1;
+        assert_eq!(
+            prepare(&witness).err(),
+            Some("note leaf is not the spent commitment")
+        );
     }
 }

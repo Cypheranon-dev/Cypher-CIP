@@ -9,6 +9,19 @@
 use winterfell::math::fields::f64::BaseElement;
 use winterfell::math::FieldElement;
 
+/// Spend-note domain. Input and output notes use the same domain so an
+/// output can be spent.
+pub const DOM_NOTE: u64 = 1;
+/// Nullifier domain. Distinct from [`DOM_NOTE`].
+pub const DOM_NULL: u64 = 2;
+/// Event domain. Binds payload, height, fee, and the previous block id.
+pub const DOM_EVENT: u64 = 4;
+
+/// Rows per Poseidon2 permutation, including the input row.
+pub const SLOT_ROWS: usize = 32;
+/// First trace slot that is padding, not a permutation.
+pub const PAD_SLOT: usize = 7;
+
 const RC_INITIAL: [[u64; 8]; 4] = [
     [
         0xdd5743e7f2a5a5d9,
@@ -132,14 +145,14 @@ const DIAG: [u64; 8] = [
 ];
 
 #[inline]
-fn sbox(x: BaseElement) -> BaseElement {
-    let x2 = x * x;
-    let x4 = x2 * x2;
+pub fn sbox<E: FieldElement>(x: E) -> E {
+    let x2 = x.square();
+    let x4 = x2.square();
     x4 * x2 * x
 }
 
 #[inline]
-fn mat4(x: &mut [BaseElement; 4]) {
+fn mat4<E: FieldElement>(x: &mut [E; 4]) {
     let t01 = x[0] + x[1];
     let t23 = x[2] + x[3];
     let t0123 = t01 + t23;
@@ -154,9 +167,13 @@ fn mat4(x: &mut [BaseElement; 4]) {
 }
 
 #[inline]
-fn external_linear(state: &mut [BaseElement; 8]) {
-    mat4((&mut state[0..4]).try_into().unwrap());
-    mat4((&mut state[4..8]).try_into().unwrap());
+pub fn external_linear<E: FieldElement>(state: &mut [E; 8]) {
+    let mut left = [state[0], state[1], state[2], state[3]];
+    let mut right = [state[4], state[5], state[6], state[7]];
+    mat4(&mut left);
+    mat4(&mut right);
+    state[..4].copy_from_slice(&left);
+    state[4..].copy_from_slice(&right);
 
     let sums = [
         state[0] + state[4],
@@ -170,33 +187,103 @@ fn external_linear(state: &mut [BaseElement; 8]) {
 }
 
 #[inline]
-fn internal_linear(state: &mut [BaseElement; 8]) {
-    let sum = state.iter().copied().fold(BaseElement::ZERO, |a, b| a + b);
+pub fn internal_linear<E: FieldElement<BaseField = BaseElement>>(state: &mut [E; 8]) {
+    let sum = state.iter().copied().fold(E::ZERO, |a, b| a + b);
     for i in 0..8 {
-        state[i] = sum + state[i] * BaseElement::new(DIAG[i]);
+        state[i] = sum + state[i] * E::from(BaseElement::new(DIAG[i]));
     }
 }
 
-/// Apply the canonical width-8 Goldilocks Poseidon2 permutation.
-pub fn permute(mut state: [BaseElement; 8]) -> [BaseElement; 8] {
+pub fn linear_layer<E: FieldElement>(mut state: [E; 8]) -> [E; 8] {
     external_linear(&mut state);
+    state
+}
+
+pub fn full_round<E: FieldElement>(mut state: [E; 8], rc: [E; 8]) -> [E; 8] {
+    for i in 0..8 {
+        state[i] = sbox(state[i] + rc[i]);
+    }
+    external_linear(&mut state);
+    state
+}
+
+pub fn partial_round<E: FieldElement<BaseField = BaseElement>>(
+    mut state: [E; 8],
+    rc0: E,
+) -> [E; 8] {
+    state[0] = sbox(state[0] + rc0);
+    internal_linear(&mut state);
+    state
+}
+
+/// Which transition leaves this trace row. Round constants are zero unless
+/// the row is a full or partial S-box round.
+#[derive(Clone, Copy, Debug)]
+pub struct StepFlags {
+    pub linear: bool,
+    pub full: bool,
+    pub partial: bool,
+    pub pad: bool,
+    pub row0: bool,
+    pub boundary: [bool; 7],
+    pub rc: [u64; 8],
+}
+
+/// Flags for one row of the 256-row spend trace. Slots 0..6 are permutations.
+/// Slot 7 is padding. Row 0 is also the note preimage.
+pub fn step_flags(step: usize) -> StepFlags {
+    let mut flags = StepFlags {
+        linear: false,
+        full: false,
+        partial: false,
+        pad: false,
+        row0: false,
+        boundary: [false; 7],
+        rc: [0; 8],
+    };
+    let slot = step / SLOT_ROWS;
+    let local = step % SLOT_ROWS;
+    if slot >= PAD_SLOT {
+        flags.pad = true;
+        return flags;
+    }
+    if local == SLOT_ROWS - 1 {
+        flags.boundary[slot] = true;
+        return flags;
+    }
+    match local {
+        0 => flags.linear = true,
+        1..=4 => {
+            flags.full = true;
+            flags.rc = RC_INITIAL[local - 1];
+        }
+        5..=26 => {
+            flags.partial = true;
+            flags.rc[0] = RC_INTERNAL[local - 5];
+        }
+        27..=30 => {
+            flags.full = true;
+            flags.rc = RC_FINAL[local - 27];
+        }
+        _ => unreachable!("local row {local}"),
+    }
+    if step == 0 {
+        flags.row0 = true;
+    }
+    flags
+}
+
+/// Apply the canonical width-8 Goldilocks Poseidon2 permutation.
+pub fn permute(state: [BaseElement; 8]) -> [BaseElement; 8] {
+    let mut state = linear_layer(state);
     for rc in RC_INITIAL {
-        for i in 0..8 {
-            state[i] = sbox(state[i] + BaseElement::new(rc[i]));
-        }
-        external_linear(&mut state);
+        state = full_round(state, rc.map(BaseElement::new));
     }
-
     for rc in RC_INTERNAL {
-        state[0] = sbox(state[0] + BaseElement::new(rc));
-        internal_linear(&mut state);
+        state = partial_round(state, BaseElement::new(rc));
     }
-
     for rc in RC_FINAL {
-        for i in 0..8 {
-            state[i] = sbox(state[i] + BaseElement::new(rc[i]));
-        }
-        external_linear(&mut state);
+        state = full_round(state, rc.map(BaseElement::new));
     }
     state
 }
@@ -246,6 +333,35 @@ mod tests {
             0xf415abb924da395b,
         ];
         assert_eq!(got.map(|x| x.as_int()), expected);
+    }
+
+    #[test]
+    fn stepwise_rounds_match_permute() {
+        let input = [
+            BaseElement::new(9),
+            BaseElement::new(8),
+            BaseElement::new(7),
+            BaseElement::new(DOM_NOTE),
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+        ];
+        let mut state = input;
+        for local in 0..SLOT_ROWS - 1 {
+            let flags = step_flags(local);
+            let rc = flags.rc.map(BaseElement::new);
+            state = if flags.linear {
+                linear_layer(state)
+            } else if flags.full {
+                full_round(state, rc)
+            } else if flags.partial {
+                partial_round(state, rc[0])
+            } else {
+                panic!("row {local} is not a round");
+            };
+        }
+        assert_eq!(state, permute(input));
     }
 
     #[test]

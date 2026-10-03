@@ -19,8 +19,7 @@ Concretely:
 - A PR changing a number in the whitepaper (emission, security bits,
   throughput, anything) needs the derivation, not just the new number.
 - If you're reporting a benchmark, say what hardware and name the function
-  that ran. `a³ + 3b³ + 7` is not Poseidon2. Equihash(48, 5) is not
-  Equihash-512. An in-process chain is not a public P2P testnet and does
+  that ran. Equihash(48, 5) is not Equihash-512. An in-process chain is not a public P2P testnet and does
   not run 120-second blocks. Don't round in a way that hides what happened.
 - If something doesn't work yet, say so in the PR instead of leaving it
   for someone else to discover. "This passes 3 of 4 test cases, here's the
@@ -30,9 +29,9 @@ Concretely:
 
 Check open issues first, but broadly:
 
-- A collision-resistant in-circuit hash. The AIR uses `a³ + 3b³ + 7`. Do not rename it Poseidon2 unless the gadget is Poseidon2.
-- A legal Equihash parameter set with a real cost model. The paper's Equihash-512 is `(512, 9)`, and that pair is rejected on purpose. Do not weaken `Instance::new` so it constructs. Do not call Equihash(48, 5) Equihash-512.
-- Note commitments and encryption. The node checks nullifier uniqueness, not a commitment-set inclusion of a previous note.
+- Note encryption, and a viewing key that opens a note. The node stores commitments only.
+- A legal Equihash parameter set with a real cost model. The paper's Equihash-512 is `(512, 9)`, and that pair is rejected on purpose. Do not call Equihash(48, 5) Equihash-512.
+- Moving bridge, swap, DAO, and oracle out of `sim/protocol_logic.py` and into the node, with the same accept and reject tests.
 - Independent verification of whitepaper §19 entries marked unreproduced.
 
 

@@ -27,9 +27,9 @@ This is early. The things most worth attacking:
 - `crypto/dilithium` and the envelope check in `node` (a signature that verifies over the wrong bytes)
 - `crypto/equihash` (a solution `verify` accepts after a swap, or a parameter check that lets `(512, 9)` through)
 - the emission math in `sim/emission.py` and the whitepaper
-- the protocol-logic stand-in in `sim/protocol_logic.py`
+- `sim/protocol_logic.py` (not consensus; a bug there is not a chain bug)
 
-The cubic hash in the AIR is not claimed to be collision-resistant. A collision against `a³ + 3b³ + 7` is not a new break; replacing that hash is.
+The spend hash is Poseidon2. A collision, a forged spend, or a coinbase that pays the wrong amount is in scope.
 
 We don't have a bug bounty program yet. If that changes, it'll be announced
 here and at cypheranon.com.

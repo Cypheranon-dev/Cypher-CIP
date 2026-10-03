@@ -1,30 +1,47 @@
 //! In-process chain. One process, not a public P2P network, and not
-//! cypheranon.com. Block timestamps are caller-supplied. This process
-//! does not produce a block every 120 seconds.
+//! cypheranon.com. Callers supply timestamps. Nothing here waits 120 seconds.
 //!
 //! A block is accepted only when Equihash(48, 5) verifies, the solution
-//! commitment meets the bit target, every transfer's CIP proof verifies,
-//! the Dilithium2 user signature and the Dilithium5 envelope verify, and
-//! the nullifier is new. Equihash(48, 5) is not Equihash-512. The in-circuit
-//! hash is a^3 + 3b^3 + 7, not Poseidon2. The field secret inside the
-//! circuit is not the Dilithium key.
+//! commitment meets the bit target, every transfer's Poseidon2 spend proof
+//! verifies, the note root and event match this chain, both Dilithium
+//! signatures verify, and the nullifier is new. The output note is then
+//! appended. Equihash(48, 5) is not Equihash-512.
+//!
+//! Coinbase, when present, pays `block_reward(height)` into a note the
+//! miner can spend. The bit target is retargeted from the paper's formula
+//! once 500 intervals exist, and clamped at 12 bits so this process cannot
+//! stall. The paper's `T_target` is 120 seconds. That number is the formula
+//! input. It is not a block interval this process produces.
 
 use std::collections::BTreeSet;
 
 use blake2b_simd::Params;
-use cypher_cip::{verify_bytes, PublicInputs};
+use cypher_cip::{
+    digest_words, event_digest, note_commitment, root_words, verify_bytes, PublicInputs, LEAVES,
+    PUBLIC_LEN,
+};
 use cypher_dilithium::{verify2, verify5};
 use cypher_equihash::{commit, leading_zero_bits, verify, Instance, SOLVED_K, SOLVED_N};
 
 const WINDOW: usize = 500;
+const TARGET_SECONDS: u64 = 120;
+const MAX_BITS: u32 = 12;
+pub const BLOCKS_PER_YEAR: u64 = 262_800;
+pub const INITIAL_REWARD: u64 = 1_522_069;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Transfer {
     pub proof: Vec<u8>,
-    pub public: [u64; 4],
+    pub public: [u64; PUBLIC_LEN],
     pub user_pk: Vec<u8>,
     pub user_sig: Vec<u8>,
     pub envelope_sig: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Coinbase {
+    pub sk: u64,
+    pub commitment: [u64; 4],
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -36,17 +53,30 @@ pub struct Block {
     pub indices: Vec<u32>,
     pub difficulty_bits: u32,
     pub transfers: Vec<Transfer>,
+    pub coinbase: Option<Coinbase>,
     pub coinbase_pk: Vec<u8>,
     pub coinbase_sig: Vec<u8>,
 }
 
+struct Ledger {
+    leaves: [[u64; 4]; LEAVES],
+    nullifiers: BTreeSet<[u64; 4]>,
+    bits: u32,
+    prev: [u8; 32],
+    prev_time: Option<u64>,
+    timestamps: Vec<u64>,
+}
+
 #[derive(Clone, Debug)]
 pub struct Chain {
-    pub infra_pk: Vec<u8>,
-    pub miner_root: u64,
-    pub difficulty_bits: u32,
+    infra_pk: Vec<u8>,
+    genesis_leaves: [[u64; 4]; LEAVES],
+    initial_bits: u32,
     blocks: Vec<Block>,
-    nullifiers: BTreeSet<u64>,
+    leaves: [[u64; 4]; LEAVES],
+    nullifiers: BTreeSet<[u64; 4]>,
+    bits: u32,
+    timestamps: Vec<u64>,
 }
 
 fn blake32(parts: &[&[u8]]) -> [u8; 32] {
@@ -63,10 +93,38 @@ fn blake32(parts: &[&[u8]]) -> [u8; 32] {
     out
 }
 
-fn encode_public(public: &[u64; 4]) -> [u8; 32] {
-    let mut out = [0u8; 32];
-    for (i, value) in public.iter().enumerate() {
-        out[i * 8..i * 8 + 8].copy_from_slice(&value.to_le_bytes());
+fn words4(words: &[u64], at: usize) -> [u64; 4] {
+    [words[at], words[at + 1], words[at + 2], words[at + 3]]
+}
+
+pub fn chain_words(block_id: &[u8; 32]) -> [u64; 4] {
+    let mut out = [0u64; 4];
+    for lane in 0..4 {
+        let mut bytes = [0u8; 4];
+        bytes.copy_from_slice(&block_id[lane * 4..lane * 4 + 4]);
+        out[lane] = u32::from_le_bytes(bytes).into();
+    }
+    out
+}
+
+/// Per-block subsidy. Year 0 is `1,522,069`. Later years take
+/// `floor(previous * 5 / 8)`, which is the integer form of §12.2.
+pub fn block_reward(height: u64) -> u64 {
+    if height == 0 {
+        return 0;
+    }
+    let year = (height - 1) / BLOCKS_PER_YEAR;
+    let mut reward = u128::from(INITIAL_REWARD);
+    for _ in 0..year {
+        reward = reward * 5 / 8;
+    }
+    u64::try_from(reward).unwrap_or(0)
+}
+
+fn encode_public(public: &[u64; PUBLIC_LEN]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(PUBLIC_LEN * 8);
+    for value in public {
+        out.extend_from_slice(&value.to_le_bytes());
     }
     out
 }
@@ -74,7 +132,7 @@ fn encode_public(public: &[u64; 4]) -> [u8; 32] {
 pub fn envelope_message(transfer: &Transfer) -> Vec<u8> {
     let mut message = b"Cypher-CIP/envelope/v1".to_vec();
     message.extend_from_slice(&transfer.proof);
-    message.extend_from_slice(&transfer.public[2].to_le_bytes());
+    message.extend_from_slice(&encode_public(&transfer.public));
     message
 }
 
@@ -85,12 +143,24 @@ pub fn user_message(transfer: &Transfer) -> Vec<u8> {
     message
 }
 
+fn coinbase_bytes(coinbase: &Option<Coinbase>) -> Vec<u8> {
+    let mut out = Vec::new();
+    if let Some(coinbase) = coinbase {
+        out.extend_from_slice(&coinbase.sk.to_le_bytes());
+        for word in coinbase.commitment {
+            out.extend_from_slice(&word.to_le_bytes());
+        }
+    }
+    out
+}
+
 pub fn pow_prefix(
     prev: &[u8; 32],
     height: u64,
     timestamp: u64,
     difficulty_bits: u32,
     transfers: &[Transfer],
+    coinbase: &Option<Coinbase>,
 ) -> Vec<u8> {
     let mut prefix = Vec::new();
     prefix.extend_from_slice(prev);
@@ -101,6 +171,7 @@ pub fn pow_prefix(
         let tx = blake32(&[&transfer.proof, &encode_public(&transfer.public)]);
         prefix.extend_from_slice(&tx);
     }
+    prefix.extend_from_slice(&coinbase_bytes(coinbase));
     prefix
 }
 
@@ -111,6 +182,7 @@ pub fn block_id(block: &Block) -> [u8; 32] {
         block.timestamp,
         block.difficulty_bits,
         &block.transfers,
+        &block.coinbase,
     );
     let mut header = prefix;
     header.extend_from_slice(&block.nonce.to_le_bytes());
@@ -135,9 +207,17 @@ fn work_of(bits: u32) -> Result<u128, &'static str> {
     Ok(1u128 << bits)
 }
 
+fn bits_of(difficulty: u64) -> u32 {
+    if difficulty <= 1 {
+        0
+    } else {
+        (63 - difficulty.leading_zeros()).min(MAX_BITS)
+    }
+}
+
 /// Paper §7 formula: `D_new = D_old * (T_target * 500) / sum(t_i)`.
-/// Higher `D` is harder. The paper's `T_target` is 120 seconds. This
-/// function is not applied by the in-process chain.
+/// Higher `D` is harder. `target_seconds` is the paper's 120 when the
+/// chain calls this. The chain stores the bit length of `D`, clamped.
 pub fn adjust_difficulty(
     old: u64,
     target_seconds: u64,
@@ -155,21 +235,55 @@ pub fn adjust_difficulty(
     }
     let next = u128::from(old)
         .checked_mul(u128::from(target_seconds))
-        .and_then(|v| v.checked_mul(WINDOW as u128))
+        .and_then(|value| value.checked_mul(WINDOW as u128))
         .ok_or("difficulty overflow")?
         / sum;
     u64::try_from(next).map_err(|_| "difficulty overflow")
 }
 
-impl Chain {
-    pub fn open(infra_pk: Vec<u8>, miner_root: u64, difficulty_bits: u32) -> Self {
-        Self {
-            infra_pk,
-            miner_root,
-            difficulty_bits,
-            blocks: Vec::new(),
-            nullifiers: BTreeSet::new(),
+fn retarget(bits: u32, timestamps: &[u64]) -> Result<u32, &'static str> {
+    if timestamps.len() < WINDOW + 1 || !(timestamps.len() - 1).is_multiple_of(WINDOW) {
+        return Ok(bits);
+    }
+    let start = timestamps.len() - (WINDOW + 1);
+    let mut intervals = [0u64; WINDOW];
+    for i in 0..WINDOW {
+        let elapsed = timestamps[start + i + 1]
+            .checked_sub(timestamps[start + i])
+            .ok_or("timestamp")?;
+        if elapsed == 0 {
+            return Err("timestamp");
         }
+        intervals[i] = elapsed;
+    }
+    let old = 1u64 << bits;
+    Ok(bits_of(adjust_difficulty(old, TARGET_SECONDS, &intervals)?))
+}
+
+fn first_empty(leaves: &[[u64; 4]; LEAVES]) -> Option<usize> {
+    leaves.iter().position(|leaf| *leaf == [0; 4])
+}
+
+impl Chain {
+    pub fn open(
+        infra_pk: Vec<u8>,
+        leaves: [[u64; 4]; LEAVES],
+        difficulty_bits: u32,
+    ) -> Result<Self, &'static str> {
+        if difficulty_bits > MAX_BITS {
+            return Err("difficulty range");
+        }
+        let _ = root_words(&leaves)?;
+        Ok(Self {
+            infra_pk,
+            genesis_leaves: leaves,
+            initial_bits: difficulty_bits,
+            blocks: Vec::new(),
+            leaves,
+            nullifiers: BTreeSet::new(),
+            bits: difficulty_bits,
+            timestamps: Vec::new(),
+        })
     }
 
     pub fn height(&self) -> u64 {
@@ -184,8 +298,16 @@ impl Chain {
         &self.blocks
     }
 
-    pub fn nullifiers(&self) -> &BTreeSet<u64> {
+    pub fn nullifiers(&self) -> &BTreeSet<[u64; 4]> {
         &self.nullifiers
+    }
+
+    pub fn leaves(&self) -> &[[u64; 4]; LEAVES] {
+        &self.leaves
+    }
+
+    pub fn difficulty_bits(&self) -> u32 {
+        self.bits
     }
 
     pub fn work(&self) -> u128 {
@@ -196,31 +318,39 @@ impl Chain {
     }
 
     pub fn append(&mut self, block: Block) -> Result<(), &'static str> {
-        self.check_block(
-            &block,
-            &self.nullifiers,
-            self.tip(),
-            self.height() + 1,
-            self.blocks.last().map(|b| b.timestamp),
-        )?;
-        self.adopt_one(&block);
+        let mut ledger = self.snapshot();
+        self.apply(&mut ledger, &block)?;
+        self.blocks.push(block);
+        self.install(ledger);
         Ok(())
     }
 
     /// Replace the chain only when the candidate has strictly more work.
     pub fn consider(&mut self, blocks: Vec<Block>) -> Result<bool, &'static str> {
+        let mut leaves = self.genesis_leaves;
         let mut nullifiers = BTreeSet::new();
+        let mut bits = self.initial_bits;
+        let mut timestamps = Vec::new();
         let mut prev = [0u8; 32];
         let mut prev_time = None;
         let mut work = 0u128;
-        for (i, block) in blocks.iter().enumerate() {
-            self.check_block(block, &nullifiers, prev, (i as u64) + 1, prev_time)?;
+        for block in &blocks {
+            let mut ledger = Ledger {
+                leaves,
+                nullifiers,
+                bits,
+                prev,
+                prev_time,
+                timestamps,
+            };
+            self.apply(&mut ledger, block)?;
             work = work
                 .checked_add(work_of(block.difficulty_bits)?)
                 .ok_or("work overflow")?;
-            for transfer in &block.transfers {
-                nullifiers.insert(transfer.public[1]);
-            }
+            leaves = ledger.leaves;
+            nullifiers = ledger.nullifiers;
+            bits = ledger.bits;
+            timestamps = ledger.timestamps;
             prev = block_id(block);
             prev_time = Some(block.timestamp);
         }
@@ -228,38 +358,42 @@ impl Chain {
             return Ok(false);
         }
         self.blocks = blocks;
+        self.leaves = leaves;
         self.nullifiers = nullifiers;
+        self.bits = bits;
+        self.timestamps = timestamps;
         Ok(true)
     }
 
-    fn adopt_one(&mut self, block: &Block) {
-        for transfer in &block.transfers {
-            self.nullifiers.insert(transfer.public[1]);
+    fn snapshot(&self) -> Ledger {
+        Ledger {
+            leaves: self.leaves,
+            nullifiers: self.nullifiers.clone(),
+            bits: self.bits,
+            prev: self.tip(),
+            prev_time: self.blocks.last().map(|block| block.timestamp),
+            timestamps: self.timestamps.clone(),
         }
-        self.blocks.push(block.clone());
     }
 
-    fn check_block(
-        &self,
-        block: &Block,
-        spent: &BTreeSet<u64>,
-        prev: [u8; 32],
-        height: u64,
-        prev_time: Option<u64>,
-    ) -> Result<(), &'static str> {
-        if block.height != height {
+    fn install(&mut self, ledger: Ledger) {
+        self.leaves = ledger.leaves;
+        self.nullifiers = ledger.nullifiers;
+        self.bits = ledger.bits;
+        self.timestamps = ledger.timestamps;
+    }
+
+    fn apply(&self, ledger: &mut Ledger, block: &Block) -> Result<(), &'static str> {
+        if block.height != ledger.timestamps.len() as u64 + 1 {
             return Err("height");
         }
-        if block.prev != prev {
+        if block.prev != ledger.prev {
             return Err("prev");
         }
-        if block.difficulty_bits != self.difficulty_bits {
+        if block.difficulty_bits != ledger.bits || block.difficulty_bits > MAX_BITS {
             return Err("difficulty");
         }
-        if block.difficulty_bits >= 127 {
-            return Err("difficulty range");
-        }
-        if let Some(previous) = prev_time {
+        if let Some(previous) = ledger.prev_time {
             if block.timestamp <= previous {
                 return Err("timestamp");
             }
@@ -270,6 +404,7 @@ impl Chain {
             block.timestamp,
             block.difficulty_bits,
             &block.transfers,
+            &block.coinbase,
         );
         let mut header = prefix.clone();
         header.extend_from_slice(&block.nonce.to_le_bytes());
@@ -284,19 +419,35 @@ impl Chain {
         if !verify2(&block.coinbase_pk, &coinbase_msg, &block.coinbase_sig) {
             return Err("coinbase signature");
         }
+        let root = root_words(&ledger.leaves)?;
+        let chain = chain_words(&ledger.prev);
         let mut seen = BTreeSet::new();
+        let mut outputs = Vec::with_capacity(block.transfers.len() + 1);
         for transfer in &block.transfers {
-            let nullifier = transfer.public[1];
-            if spent.contains(&nullifier) || !seen.insert(nullifier) {
+            let public = PublicInputs::try_from_u64s(transfer.public)?;
+            let nullifier = words4(&transfer.public, 4);
+            if ledger.nullifiers.contains(&nullifier) || !seen.insert(nullifier) {
                 return Err("nullifier spent");
             }
-            if transfer.public[0] != self.miner_root {
-                return Err("miner root");
+            if digest_words(public.note_root) != root {
+                return Err("note root");
             }
-            if transfer.public[3] != block.height {
+            if public.height.as_int() != block.height {
                 return Err("proof height");
             }
-            let public = PublicInputs::try_from_u64s(transfer.public)?;
+            let expected = event_digest(
+                public.payload.as_int(),
+                block.height,
+                chain,
+                public.fee.as_int(),
+            )?;
+            if public.event_id != expected {
+                return Err("event");
+            }
+            let output = words4(&transfer.public, 8);
+            if output == [0; 4] || ledger.leaves.contains(&output) || outputs.contains(&output) {
+                return Err("duplicate note");
+            }
             verify_bytes(&transfer.proof, public)?;
             if !verify2(
                 &transfer.user_pk,
@@ -312,7 +463,38 @@ impl Chain {
             ) {
                 return Err("envelope signature");
             }
+            outputs.push(output);
         }
+        if let Some(coinbase) = &block.coinbase {
+            let expected = digest_words(note_commitment(
+                block_reward(block.height),
+                coinbase.sk,
+                block.height,
+            )?);
+            if coinbase.commitment != expected {
+                return Err("coinbase");
+            }
+            if ledger.leaves.contains(&coinbase.commitment)
+                || outputs.contains(&coinbase.commitment)
+            {
+                return Err("duplicate note");
+            }
+            outputs.push(coinbase.commitment);
+        }
+        if outputs.len() > ledger.leaves.iter().filter(|leaf| **leaf == [0; 4]).count() {
+            return Err("tree full");
+        }
+        for output in outputs {
+            let slot = first_empty(&ledger.leaves).ok_or("tree full")?;
+            ledger.leaves[slot] = output;
+        }
+        for nullifier in seen {
+            ledger.nullifiers.insert(nullifier);
+        }
+        ledger.timestamps.push(block.timestamp);
+        ledger.bits = retarget(ledger.bits, &ledger.timestamps)?;
+        ledger.prev = block_id(block);
+        ledger.prev_time = Some(block.timestamp);
         Ok(())
     }
 }
@@ -326,19 +508,28 @@ fn encode_indices(indices: &[u32]) -> Vec<u8> {
 }
 
 /// Mine a block on `prev`. The caller has already signed each transfer.
+#[allow(clippy::too_many_arguments)]
 pub fn mine_block(
     prev: [u8; 32],
     height: u64,
     timestamp: u64,
     difficulty_bits: u32,
     transfers: Vec<Transfer>,
+    coinbase: Option<Coinbase>,
     coinbase_pk: &[u8],
     coinbase_sk: &[u8],
 ) -> Result<Block, &'static str> {
-    if difficulty_bits >= 127 {
+    if difficulty_bits > MAX_BITS {
         return Err("difficulty range");
     }
-    let prefix = pow_prefix(&prev, height, timestamp, difficulty_bits, &transfers);
+    let prefix = pow_prefix(
+        &prev,
+        height,
+        timestamp,
+        difficulty_bits,
+        &transfers,
+        &coinbase,
+    );
     let inst = solved_pow();
     let (nonce, indices) = cypher_equihash::mine(&prefix, inst, difficulty_bits)
         .ok_or("no equihash solution in range")?;
@@ -354,6 +545,7 @@ pub fn mine_block(
         indices,
         difficulty_bits,
         transfers,
+        coinbase,
         coinbase_pk: coinbase_pk.to_vec(),
         coinbase_sig,
     })
@@ -362,34 +554,36 @@ pub fn mine_block(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cypher_cip::{prepare, prove, public_key, Witness};
+    use cypher_cip::{digest_words, note_commitment, prove, Witness, LEAVES};
     use cypher_dilithium::{sign2, sign5, Keypair};
 
-    fn witness(height: u64, r_in: u64) -> Witness {
-        let mut leaves = [1u64, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
-        leaves[3] = public_key(11).as_int();
+    fn funded(chain: [u64; 4], rho_out: u64) -> Witness {
+        let note = digest_words(note_commitment(10, 11, 22).unwrap());
+        let mut leaves = [[0u64; 4]; LEAVES];
+        leaves[3] = note;
         Witness {
             sk: 11,
-            r_in,
+            r_in: 22,
+            rho_out,
             amount_in: 10,
             amount_out: 9,
             fee: 1,
-            height,
+            height: 1,
             payload: 99,
-            chain_state: 5,
+            chain_state: chain,
             index: 3,
             leaves,
         }
     }
 
-    fn signed_transfer(infra: &Keypair, user: &Keypair, height: u64, r_in: u64) -> (Transfer, u64) {
-        let prepared = prepare(&witness(height, r_in)).expect("prepare");
-        let root = prepared.public.miner_root.as_int();
-        let (proof, public) = prove(&witness(height, r_in)).expect("prove");
-        assert_eq!(public.to_u64s()[0], root);
-        let proof = proof.to_bytes();
+    fn signed_transfer(
+        infra: &Keypair,
+        user: &Keypair,
+        witness: &Witness,
+    ) -> (Transfer, [[u64; 4]; LEAVES]) {
+        let (proof, public) = prove(witness).expect("prove");
         let mut transfer = Transfer {
-            proof,
+            proof: proof.to_bytes(),
             public: public.to_u64s(),
             user_pk: user.public.clone(),
             user_sig: Vec::new(),
@@ -397,12 +591,11 @@ mod tests {
         };
         transfer.user_sig = sign2(&user.secret, &user_message(&transfer));
         transfer.envelope_sig = sign5(&infra.secret, &envelope_message(&transfer));
-        (transfer, root)
+        (transfer, witness.leaves)
     }
 
     #[test]
     fn retarget_matches_the_formula() {
-        // 120 is the paper's T_target, not an interval this chain runs.
         let slow = vec![120u64; 500];
         assert_eq!(adjust_difficulty(1_000_000, 120, &slow).unwrap(), 1_000_000);
         let fast = vec![60u64; 500];
@@ -411,14 +604,55 @@ mod tests {
     }
 
     #[test]
+    fn subsidy_follows_the_integer_schedule() {
+        assert_eq!(block_reward(1), INITIAL_REWARD);
+        assert_eq!(block_reward(BLOCKS_PER_YEAR), INITIAL_REWARD);
+        assert_eq!(block_reward(BLOCKS_PER_YEAR + 1), INITIAL_REWARD * 5 / 8);
+    }
+
+    #[test]
+    fn retarget_runs_after_five_hundred_intervals() {
+        let infra = Keypair::dilithium5();
+        let miner = Keypair::dilithium2();
+        let mut chain = Chain::open(infra.public.clone(), [[0; 4]; LEAVES], 0).unwrap();
+        for height in 1..=501 {
+            let block = mine_block(
+                chain.tip(),
+                height,
+                1_000 + height * 60,
+                chain.difficulty_bits(),
+                Vec::new(),
+                None,
+                &miner.public,
+                &miner.secret,
+            )
+            .expect("mine");
+            chain.append(block).expect("append");
+        }
+        assert_eq!(chain.height(), 501);
+        assert_eq!(chain.difficulty_bits(), 1);
+        let rejected = mine_block(
+            chain.tip(),
+            502,
+            1_000 + 502 * 60,
+            0,
+            Vec::new(),
+            None,
+            &miner.public,
+            &miner.secret,
+        )
+        .unwrap();
+        assert_eq!(chain.append(rejected).err(), Some("difficulty"));
+    }
+
+    #[test]
     fn local_chain_accepts_and_rejects() {
         let infra = Keypair::dilithium5();
         let user = Keypair::dilithium2();
         let miner = Keypair::dilithium2();
-        let started = std::time::Instant::now();
-        let (transfer, root) = signed_transfer(&infra, &user, 1, 22);
-        let prove_ms = started.elapsed().as_millis();
-        let mut chain = Chain::open(infra.public.clone(), root, 4);
+        let witness = funded(chain_words(&[0u8; 32]), 77);
+        let (transfer, leaves) = signed_transfer(&infra, &user, &witness);
+        let mut chain = Chain::open(infra.public.clone(), leaves, 4).unwrap();
 
         let mut flipped = transfer.clone();
         flipped.envelope_sig[0] ^= 1;
@@ -428,27 +662,29 @@ mod tests {
             900,
             4,
             vec![flipped],
+            None,
             &miner.public,
             &miner.secret,
         )
-        .expect("mine flipped");
+        .unwrap();
         assert_eq!(chain.append(bad_sig).err(), Some("envelope signature"));
 
-        let mut wrong = transfer.clone();
-        wrong.public[1] ^= 1;
-        wrong.user_sig = sign2(&user.secret, &user_message(&wrong));
-        wrong.envelope_sig = sign5(&infra.secret, &envelope_message(&wrong));
-        let bad = mine_block(
+        let mut wrong_event = transfer.clone();
+        wrong_event.public[18] ^= 1;
+        wrong_event.user_sig = sign2(&user.secret, &user_message(&wrong_event));
+        wrong_event.envelope_sig = sign5(&infra.secret, &envelope_message(&wrong_event));
+        let bad_event = mine_block(
             chain.tip(),
             1,
             950,
             4,
-            vec![wrong],
+            vec![wrong_event],
+            None,
             &miner.public,
             &miner.secret,
         )
-        .expect("mine bad proof");
-        assert_eq!(chain.append(bad).err(), Some("proof rejected"));
+        .unwrap();
+        assert_eq!(chain.append(bad_event).err(), Some("event"));
 
         let block1 = mine_block(
             chain.tip(),
@@ -456,37 +692,70 @@ mod tests {
             1_000,
             4,
             vec![transfer.clone()],
+            None,
             &miner.public,
             &miner.secret,
         )
-        .expect("mine 1");
-        chain.append(block1.clone()).expect("append 1");
+        .unwrap();
+        chain.append(block1.clone()).unwrap();
         assert_eq!(chain.height(), 1);
-        assert!(chain.nullifiers().contains(&transfer.public[1]));
+        let nullifier = words4(&transfer.public, 4);
+        assert!(chain.nullifiers().contains(&nullifier));
+        let output = words4(&transfer.public, 8);
+        assert!(chain.leaves().contains(&output));
+
+        let mut other = Chain::open(infra.public, leaves, 4).unwrap();
+        other.append(block1).unwrap();
+        assert!(other.nullifiers().contains(&nullifier));
 
         let replay = mine_block(
             chain.tip(),
             2,
             1_100,
             4,
-            vec![transfer.clone()],
+            vec![transfer],
+            None,
             &miner.public,
             &miner.secret,
         )
-        .expect("mine replay");
+        .unwrap();
         assert_eq!(chain.append(replay).err(), Some("nullifier spent"));
 
-        let block2 = mine_block(
+        let bad_coin = Coinbase {
+            sk: 5,
+            commitment: [1, 2, 3, 4],
+        };
+        let bad_mint = mine_block(
+            chain.tip(),
+            2,
+            1_200,
+            4,
+            Vec::new(),
+            Some(bad_coin),
+            &miner.public,
+            &miner.secret,
+        )
+        .unwrap();
+        assert_eq!(chain.append(bad_mint).err(), Some("coinbase"));
+
+        let reward = block_reward(2);
+        let minted = digest_words(note_commitment(reward, 5, 2).unwrap());
+        let good_mint = mine_block(
             chain.tip(),
             2,
             1_400,
             4,
             Vec::new(),
+            Some(Coinbase {
+                sk: 5,
+                commitment: minted,
+            }),
             &miner.public,
             &miner.secret,
         )
-        .expect("mine 2");
-        chain.append(block2).expect("append 2");
+        .unwrap();
+        chain.append(good_mint).unwrap();
+        assert!(chain.leaves().contains(&minted));
         assert_eq!(chain.height(), 2);
 
         let mut broken = mine_block(
@@ -495,67 +764,53 @@ mod tests {
             1_500,
             4,
             Vec::new(),
+            None,
             &miner.public,
             &miner.secret,
         )
-        .expect("mine broken");
+        .unwrap();
         broken.indices.swap(0, 1);
         assert_eq!(chain.append(broken).err(), Some("equihash rejected"));
-        let honest_height = chain.height();
-        let honest_work = chain.work();
 
         let alt1 = mine_block(
-            [0u8; 32],
+            [0; 32],
             1,
             2_000,
             4,
             Vec::new(),
+            None,
             &miner.public,
             &miner.secret,
         )
-        .expect("alt 1");
+        .unwrap();
         let alt2 = mine_block(
             block_id(&alt1),
             2,
             2_100,
             4,
             Vec::new(),
+            None,
             &miner.public,
             &miner.secret,
         )
-        .expect("alt 2");
+        .unwrap();
         assert!(!chain.consider(vec![alt1.clone(), alt2.clone()]).unwrap());
-        assert_eq!(chain.height(), 2);
-        assert!(chain.nullifiers().contains(&transfer.public[1]));
-
+        assert!(chain.nullifiers().contains(&nullifier));
         let alt3 = mine_block(
             block_id(&alt2),
             3,
             2_200,
             4,
             Vec::new(),
+            None,
             &miner.public,
             &miner.secret,
         )
-        .expect("alt 3");
+        .unwrap();
         assert!(chain.consider(vec![alt1, alt2, alt3]).unwrap());
         assert_eq!(chain.height(), 3);
         assert!(chain.nullifiers().is_empty());
-        eprintln!(
-            "report prove_ms={prove_ms} proof_bytes={} nullifier={} event={} proof_height={} root={} d5_pk={} d5_sig={} d2_pk={} d2_sig={} honest_height={honest_height} honest_work={honest_work} reorg_height={} reorg_work={} eq={}x{}",
-            transfer.proof.len(),
-            transfer.public[1],
-            transfer.public[2],
-            transfer.public[3],
-            transfer.public[0],
-            cypher_dilithium::DILITHIUM5_PK,
-            cypher_dilithium::DILITHIUM5_SIG,
-            cypher_dilithium::DILITHIUM2_PK,
-            cypher_dilithium::DILITHIUM2_SIG,
-            chain.height(),
-            chain.work(),
-            SOLVED_N,
-            SOLVED_K,
-        );
+        assert!(!chain.leaves().contains(&output));
+        assert_eq!(chain.work(), 48);
     }
 }

@@ -18,18 +18,18 @@ The chain check, including rejects and a heavier-chain replacement:
 cargo test --release -p cypher-node -- --nocapture local_chain
 ```
 
-Proving is release-mode and takes several seconds. CI runs the same commands.
+Proving is release-mode and takes about half a minute. CI runs the same commands.
 
 ## Tree
 
 | Path | Role |
 | --- | --- |
-| `crypto/cip` | Winterfell AIR. In-circuit hash is `a³ + 3b³ + 7`, not Poseidon2. |
+| `crypto/cip` | Winterfell spend AIR. The hash is Poseidon2 over Goldilocks, width 8. A digest is four lanes. |
 | `crypto/dilithium` | FIPS 204. Dilithium5 is ML-DSA-87. Dilithium2 is ML-DSA-44. |
 | `crypto/equihash` | Solves Equihash(48, 5). The paper's Equihash-512, `(512, 9)`, is rejected. |
-| `node` | One process. Proof, both signatures, Equihash(48, 5), nullifier set. Not a public P2P testnet and not 120-second blocks. |
-| `sim/` | SHA-256 stand-in for bridge, swap, DAO, oracle, and viewing keys, plus the §12 emission check. |
-| `results/EMISSION.md` | Formula against the printed §12.3 column. |
+| `node` | In-process chain. Proof, both signatures, note tree, coinbase, retarget. Not a public P2P testnet and not 120-second blocks. Equihash(48, 5), not Equihash-512. |
+| `sim/` | SHA-256 stand-in for bridge, swap, DAO, oracle, and viewing keys. Not consensus. Emission check for §12. |
+| `docs/PROTOCOL.md` | The rules the Rust crates enforce. |
 
 ## Security
 
