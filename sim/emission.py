@@ -21,10 +21,14 @@ def row(year: int) -> Fraction:
 def main() -> None:
     rows = [row(y) for y in range(5)]
     floored = [int(r) for r in rows]
+    summed = int(sum(rows))
+    printed = sum(PAPER_ISSUED)
+    if summed != PAPER_TOTAL or sum(floored) != PAPER_TOTAL - 1:
+        raise SystemExit(f"emission drifted: floor-sum {summed} year-floors {sum(floored)}")
     print(f"floor each year {sum(floored)}")
-    print(f"floor of sum {int(sum(rows))}")
+    print(f"floor of sum {summed}")
     print(f"paper total {PAPER_TOTAL}")
-    print(f"printed column sum {sum(PAPER_ISSUED)}")
+    print(f"printed column sum {printed}")
     for y, exact in enumerate(rows):
         print(f"year {y + 1} floor {int(exact)} printed {PAPER_ISSUED[y]}")
 

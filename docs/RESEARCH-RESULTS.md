@@ -1,6 +1,12 @@
 # Research results
 
-Date: 2026-10-03. Tree: `dbbd8b2` (`main`).
+## Current
+
+There is still no CIP circuit, Dilithium5 envelope, Equihash-512 miner, node, or testnet in this tree. `sim/protocol_logic.py` is a SHA-256 stand-in. Its accept and reject cases run with `python3 tests/test_protocol_logic.py`. The 600 s counters in `results/SOAK.md` are a retired loop, not a result. Emission is derived in `results/EMISSION.md`.
+
+## At dbbd8b2
+
+Date: 2026-10-03. Tree: `dbbd8b2`.
 
 Request: run a testnet on the CIP circuit and publish the result.
 

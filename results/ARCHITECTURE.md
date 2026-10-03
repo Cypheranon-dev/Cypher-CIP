@@ -1,16 +1,16 @@
 # Architecture map
 
-This is the map the stand-in implements. It is not the paper's cryptography.
+What `sim/protocol_logic.py` checks. It is not the paper's cryptography.
 
-| Paper | In `sim/protocol_logic.py` |
+| Paper | In this stand-in |
 | --- | --- |
-| §4 four statements | Membership, `H(sk, r_in)` nullifier, non-negative amount, height bind. Hash checks, not a STARK. |
-| §5 envelope | `SHA-256(bind \|\| event_id)` re-checked in `seal`. Not Dilithium5. |
-| §6 flow | Local build, then miner re-check, then header hash. |
-| §7 PoW | Not run. Height is a batch counter. |
-| §8 viewing keys | Per-key `H(vk, sk)`. No foundation key. |
-| §9 MaskSwap | Price must sit in `[p_a, p_b]`. Fees not moved. |
-| §10 bridge | Mint-style reject under 8 votes. |
-| §11 oracle | Weights 0.50 / 0.40 / 0.10 must sum to 1. |
-| §12 emission | Checked beside the soak, not inside it. See `results/SOAK.md`. |
-| §17 DAO | Reject under 5% turnout or 67% yes. |
+| §4 four statements | Membership of the input note, nullifier `H(sk, r_in)`, exact input value, height equal to the next block. SHA-256, not a STARK. |
+| §5 envelope | `SHA-256` over a bind of amount, kind, height, and the rule fields. Re-checked in `seal`. Not Dilithium5. |
+| §6 flow | Build, then miner re-check, then header hash. |
+| §7 PoW | Not run. `work` is a block count, so heavier-chain is only a counter. |
+| §8 viewing keys | `H("vk", sk)` opens that key. A foundation string does not. |
+| §9 MaskSwap | A spend whose price is outside `[p_a, p_b]` is rejected. Fees are not moved. |
+| §10 bridge | A mint. Rejected below 8 votes or above 15. |
+| §11 oracle | A spend whose three weights do not sum to 1 is rejected. |
+| §12 emission | `sim/emission.py`. Not inside the old soak. |
+| §17 DAO | A spend under 5% turnout or 67% yes is rejected. |

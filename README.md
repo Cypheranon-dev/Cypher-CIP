@@ -16,20 +16,22 @@ The name CIP is the circuit, not a standards process. This repository is the pub
 | `CONTRIBUTING.md` | A result has to run. Accept-only circuits are not tests. |
 | `docs/STATUS.md` | Gap list. This is the source of truth for "done". |
 | `docs/RESEARCH-RESULTS.md` | 2026-10-03 attempt. No circuit, so no testnet. |
-| `results/SOAK.md` | 600 s hash stand-in. Not a CIP proof. |
+| `results/SOAK.md` | Retired 600 s loop. Not a result. |
 | `results/EMISSION.md` | §12.3 derivation. Exact total matches; printed column does not. |
-| `sim/protocol_logic.py` | Hash stand-in. Accept and reject cases in `tests/`. |
+| `sim/protocol_logic.py` | SHA-256 stand-in. |
+| `tests/test_protocol_logic.py` | Accept and reject cases. Run `python3 tests/test_protocol_logic.py`. |
+| `.github/workflows/test.yml` | Runs that file and `sim/emission.py`. |
 
-Not in this tree, despite being named in the docs: `cip-combined`, `cip-merkle-test`, a node, genesis, or CI. `sim/protocol_logic.py` is a hash stand-in, not those circuits. Do not treat the missing paths as implemented.
+Not in this tree, despite being named in the docs: `cip-combined`, `cip-merkle-test`, a node, or genesis. `sim/protocol_logic.py` is a SHA-256 stand-in, not those circuits. CI runs that stand-in only. Do not treat the missing paths as implemented.
 
 ## Open gaps
 
 These block any network:
 
 - Statement 4 (existence binding) is not folded into `cip-combined`.
-- In-circuit hash is still f128 / Rescue128. The proposed parameters are Goldilocks / Poseidon2-GL64. Benchmarks on the stand-in are not Poseidon2 numbers.
+- The in-circuit hash is not in this repo. The proposed parameters are Goldilocks / Poseidon2-GL64. The in-tree stand-in is SHA-256, and its numbers are not Poseidon2 numbers.
 - Whitepaper §19 entries marked unreproduced have not been independently checked.
-- No public proof/verify tests, so the circuit cannot yet be reviewed.
+- No public proof/verify tests for a STARK, so the circuit cannot yet be reviewed. The hash stand-in tests are not that.
 
 File those as issues from `.github/ISSUE_TEMPLATE` rather than restating them in chat.
 
