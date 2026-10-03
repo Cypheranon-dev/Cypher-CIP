@@ -11,7 +11,7 @@ The name CIP is the circuit, not a standards process. This repository is the pub
 
 | Path | Status |
 | --- | --- |
-| `cypher_whitepaper_v1_4.pdf` | Design document. Numbers in §19 marked unreproduced are not claims. |
+| `docs/whitepaper-v1.4.pdf` | Design document. Numbers in §19 marked unreproduced are not claims. |
 | `SECURITY.md` | How to report a forge, double-spend, or privacy break. |
 | `CONTRIBUTING.md` | A result has to run. Accept-only circuits are not tests. |
 | `docs/STATUS.md` | Gap list. This is the source of truth for "done". |
@@ -41,4 +41,4 @@ Pre-audit. No bounty. No value should sit on this design. Report forge, double-s
 
 ## License
 
-Apache-2.0 or MIT, at your option. See `LICENSE`, `LICENSE-APACHE-2.0`, and `LICENSE-MIT`.
+Apache-2.0 or MIT, at your option. See `LICENSE-APACHE-2.0` and `LICENSE-MIT`.
