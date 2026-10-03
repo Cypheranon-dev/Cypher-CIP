@@ -26,7 +26,7 @@ Snapshots were written every 30 s (21 rows). First snapshot t=30.0 s, height 254
 
 ## Emission check, separate from the soak
 
-See `results/EMISSION.md`. The exact product matches the stated total, 964,940,762,634. Multiplying the rounded yearly rewards does not. The printed issued column does not sum to the stated total.
+See `results/EMISSION.md`. Floor of the five-year sum is 964,940,762,634, the stated total. Floor of each year then sum is 964,940,762,633. The printed column sums to 964,941,029,434.
 
 ## What this does not prove
 

@@ -14,18 +14,19 @@ PAPER_ISSUED = (
 )
 
 
-def issued(year: int) -> int:
-    return int(R0 * (K ** year) * BLOCKS)
+def row(year: int) -> Fraction:
+    return R0 * (K ** year) * BLOCKS
 
 
 def main() -> None:
-    rows = [issued(y) for y in range(5)]
-    total = sum(rows)
-    print(f"exact total {total}")
-    print(f"paper total {PAPER_TOTAL} match {total == PAPER_TOTAL}")
+    rows = [row(y) for y in range(5)]
+    floored = [int(r) for r in rows]
+    print(f"floor each year {sum(floored)}")
+    print(f"floor of sum {int(sum(rows))}")
+    print(f"paper total {PAPER_TOTAL}")
     print(f"printed column sum {sum(PAPER_ISSUED)}")
-    for y, row in enumerate(rows):
-        print(f"year {y + 1} exact {row} printed {PAPER_ISSUED[y]}")
+    for y, exact in enumerate(rows):
+        print(f"year {y + 1} floor {int(exact)} printed {PAPER_ISSUED[y]}")
 
 
 if __name__ == "__main__":
