@@ -7,7 +7,7 @@ labels: circuit
 
 ## Gap
 
-Which statement or gadget? Existence binding is statement 4.
+Which statement or gadget?
 
 ## Expected
 
@@ -15,4 +15,4 @@ The accept case, and the reject case that should fail.
 
 ## What actually happens
 
-Prove/verify output, or "not in the public tree".
+Prove and verify output.
