@@ -72,13 +72,15 @@ fn encode_public(public: &[u64; 4]) -> [u8; 32] {
 }
 
 pub fn envelope_message(transfer: &Transfer) -> Vec<u8> {
-    let mut message = transfer.proof.clone();
+    let mut message = b"Cypher-CIP/envelope/v1".to_vec();
+    message.extend_from_slice(&transfer.proof);
     message.extend_from_slice(&transfer.public[2].to_le_bytes());
     message
 }
 
 pub fn user_message(transfer: &Transfer) -> Vec<u8> {
-    let mut message = transfer.proof.clone();
+    let mut message = b"Cypher-CIP/user/v1".to_vec();
+    message.extend_from_slice(&transfer.proof);
     message.extend_from_slice(&encode_public(&transfer.public));
     message
 }
@@ -103,15 +105,19 @@ pub fn pow_prefix(
 }
 
 pub fn block_id(block: &Block) -> [u8; 32] {
-    let mut indices = Vec::with_capacity(block.indices.len() * 4);
-    for index in &block.indices {
-        indices.extend_from_slice(&index.to_le_bytes());
-    }
-    blake32(&[
+    let prefix = pow_prefix(
         &block.prev,
-        &block.height.to_le_bytes(),
-        &block.timestamp.to_le_bytes(),
-        &block.nonce.to_le_bytes(),
+        block.height,
+        block.timestamp,
+        block.difficulty_bits,
+        &block.transfers,
+    );
+    let mut header = prefix;
+    header.extend_from_slice(&block.nonce.to_le_bytes());
+    let indices = encode_indices(&block.indices);
+    blake32(&[
+        b"Cypher-CIP/block/v1",
+        &header,
         &indices,
         &block.coinbase_pk,
         &block.coinbase_sig,
@@ -144,7 +150,14 @@ pub fn adjust_difficulty(
     if sum == 0 {
         return Err("zero elapsed");
     }
-    let next = u128::from(old) * u128::from(target_seconds) * (WINDOW as u128) / sum;
+    if target_seconds == 0 {
+        return Err("zero target");
+    }
+    let next = u128::from(old)
+        .checked_mul(u128::from(target_seconds))
+        .and_then(|v| v.checked_mul(WINDOW as u128))
+        .ok_or("difficulty overflow")?
+        / sum;
     u64::try_from(next).map_err(|_| "difficulty overflow")
 }
 
@@ -243,6 +256,9 @@ impl Chain {
         if block.difficulty_bits != self.difficulty_bits {
             return Err("difficulty");
         }
+        if block.difficulty_bits >= 127 {
+            return Err("difficulty range");
+        }
         if let Some(previous) = prev_time {
             if block.timestamp <= previous {
                 return Err("timestamp");
@@ -280,7 +296,7 @@ impl Chain {
             if transfer.public[3] != block.height {
                 return Err("proof height");
             }
-            let public = PublicInputs::from_u64s(transfer.public);
+            let public = PublicInputs::try_from_u64s(transfer.public)?;
             verify_bytes(&transfer.proof, public)?;
             if !verify2(
                 &transfer.user_pk,
@@ -319,6 +335,9 @@ pub fn mine_block(
     coinbase_pk: &[u8],
     coinbase_sk: &[u8],
 ) -> Result<Block, &'static str> {
+    if difficulty_bits >= 127 {
+        return Err("difficulty range");
+    }
     let prefix = pow_prefix(&prev, height, timestamp, difficulty_bits, &transfers);
     let inst = solved_pow();
     let (nonce, indices) = cypher_equihash::mine(&prefix, inst, difficulty_bits)
