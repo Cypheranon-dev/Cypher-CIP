@@ -21,6 +21,8 @@
 //! The field `sk` is not a Dilithium secret. Dilithium signs the envelope
 //! outside this circuit.
 
+pub mod poseidon2;
+
 use winterfell::crypto::{hashers::Rp64_256, DefaultRandomCoin, ElementHasher, MerkleTree};
 use winterfell::math::{fields::f64::BaseElement, FieldElement, ToElements};
 use winterfell::{
