@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security report
+    url: mailto:Contact@Cypheranon.com
+    about: Forge, double-spend, and privacy breaks. Do not open a public issue.

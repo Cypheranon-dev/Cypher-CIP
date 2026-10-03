@@ -26,17 +26,7 @@ Snapshots were written every 30 s (21 rows). First snapshot t=30.0 s, height 254
 
 ## Emission check, separate from the soak
 
-§12.3 is per-block reward times 262,800 blocks, not five annual payments. Recomputing that product:
-
-| Year | Reward | Issued |
-| --- | --- | --- |
-| 1 | 1,522,069 | 399,999,733,200 |
-| 2 | 951,293 | 249,999,800,400 |
-| 3 | 594,558 | 156,249,842,400 |
-| 4 | 371,599 | 97,656,217,200 |
-| 5 | 232,249 | 61,035,037,200 |
-
-Sum: 964,940,630,400. Paper total: 964,940,762,634. Match: False.
+See `results/EMISSION.md`. The exact product matches the stated total, 964,940,762,634. Multiplying the rounded yearly rewards does not. The printed issued column does not sum to the stated total.
 
 ## What this does not prove
 

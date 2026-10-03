@@ -17,8 +17,10 @@ The name CIP is the circuit, not a standards process. This repository is the pub
 | `docs/STATUS.md` | Gap list. This is the source of truth for "done". |
 | `docs/RESEARCH-RESULTS.md` | 2026-10-03 attempt. No circuit, so no testnet. |
 | `results/SOAK.md` | 600 s hash stand-in. Not a CIP proof. |
+| `results/EMISSION.md` | §12.3 derivation. Exact total matches; printed column does not. |
+| `sim/protocol_logic.py` | Hash stand-in. Accept and reject cases in `tests/`. |
 
-Not in this tree, despite being named in the docs: `cip-combined`, `cip-merkle-test`, the protocol-logic simulator, a node, genesis, or CI. Do not treat those as implemented.
+Not in this tree, despite being named in the docs: `cip-combined`, `cip-merkle-test`, a node, genesis, or CI. `sim/protocol_logic.py` is a hash stand-in, not those circuits. Do not treat the missing paths as implemented.
 
 ## Open gaps
 
