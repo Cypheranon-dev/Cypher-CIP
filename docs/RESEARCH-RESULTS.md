@@ -34,3 +34,15 @@ This is the result. A later file that claims a run has to name the commit that c
 - Whitepaper §19 entries marked unreproduced have not been independently checked.
 
 Exit for the next results file: those two circuits are in-tree, statement 4 is folded, an accept test and a reject test both run, and the hash gadget is the proposed parameters or this file still calls it a stand-in.
+
+## Unreproduced prior session
+
+An earlier chat described a 600 s mainnet-style soak of a three-layer node (`mainnet/node.py`, `apps.py`, `emission.py`) and a live snapshot at 421 s: height 5,635, 4,437 CIP accepts, 794 rejects, 1,832 attacks blocked, 0 leaks. That process and its log are not in this repository and are not on this machine. The figures are not a result of `a8a8d9a` or of any commit on `main`.
+
+Checked against `docs/whitepaper-v1.4.pdf`, the same write-up also used stand-ins the paper does not specify:
+
+- Envelope in that run was WOTS+ over `(bind || event_id)`. §5 specifies CRYSTALS-Dilithium5 over `(CIP_proof || event_id)`.
+- Consensus in that run was Equihash-lite with a 12-bit soak cap. §7 specifies Equihash(n=512, k=9).
+- Recursive block STARKs and public P2P were absent there, as they are here.
+
+Until that code is committed and the accept case, the reject case, and the 600 s run are repeated from the committed tree, the 421 s snapshot stays unreproduced.
