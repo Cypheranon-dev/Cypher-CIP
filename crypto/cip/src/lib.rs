@@ -1,12 +1,15 @@
 //! Four-statement CIP air, proved with Winterfell (FRI, no trusted setup).
 //!
 //! Field: Goldilocks. Blowup 8, 84 queries, grinding 20, quadratic extension.
-//! Those are the whitepaper §4.7 parameters.
+//! Those four numbers are the §4.7 proposal. The hash in §4.7 is not.
 //!
-//! The in-circuit hash is H(a, b) = a^3 + 3 b^3 + 7. Poseidon2 is not in
-//! Winterfell; this is not that hash, and it is not collision-resistant.
-//! The STARK commitment hash is Rescue-Prime (Rp64_256), the same stand-in
-//! §4.7.1 used.
+//! In-circuit hash: H(a, b) = a^3 + 3 b^3 + 7. The paper's name for that
+//! role is Poseidon2 (§4.4, §4.7). This gadget is not Poseidon2, and it is
+//! not collision-resistant. It is also not Rescue-Prime. Rescue-Prime is
+//! the name §4.7.1 uses for a toy circuit standing in for Poseidon2.
+//!
+//! Winterfell's commitment hasher is Rp64_256. That is the library hasher.
+//! It is not the in-circuit hash, and it is not Poseidon2.
 //!
 //! Statements inside the proof:
 //!   miner-set membership of pk = H(sk, 1) in the public miner root (depth 4)

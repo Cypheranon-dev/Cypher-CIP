@@ -1,20 +1,19 @@
 //! Equihash (Wagner / generalized birthday), Blake2b, Zcash verification order.
 //!
-//! Whitepaper §7 names Equihash(n=512, k=9). That pair is not a legal instance:
-//! k+1 does not divide n, and n/(k+1)+1 does not fit the 32-bit index word
-//! the algorithm uses. `Instance::paper()` returns that error.
+//! The paper's name is Equihash-512, defined in §7 as Equihash(n=512, k=9).
+//! That pair is not a legal instance: k+1 does not divide n.
+//! `Instance::paper()` returns that error. (512, 15) fails the 32-bit index word.
 //!
-//! The implementation itself is the algorithm. Tests solve and verify
-//! Equihash(48, 5), which satisfies both constraints and is byte-aligned.
-//! That instance is not Equihash-512.
+//! The instance this crate solves is Equihash(48, 5). It is legal and
+//! byte-aligned. It is not Equihash-512, and it is not a network parameter.
 
 use blake2b_simd::Params;
 
 pub const PAPER_N: u32 = 512;
 pub const PAPER_K: u32 = 9;
-/// Legal byte-aligned instance used by the local testnet. Not the whitepaper pair.
-pub const TESTNET_N: u32 = 48;
-pub const TESTNET_K: u32 = 5;
+/// Equihash(48, 5). Not Equihash-512.
+pub const SOLVED_N: u32 = 48;
+pub const SOLVED_K: u32 = 5;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Instance {
@@ -313,10 +312,10 @@ mod tests {
 
     #[test]
     fn solve_then_verify_and_reject_a_swap() {
-        let inst = Instance::new(TESTNET_N, TESTNET_K).unwrap();
+        let inst = Instance::new(SOLVED_N, SOLVED_K).unwrap();
         let mut found = None;
         for salt in 0..32u32 {
-            let header = format!("cypher-testnet-header-{salt}");
+            let header = format!("equihash-48-5-{salt}");
             let sols = solve(header.as_bytes(), inst);
             if !sols.is_empty() {
                 found = Some((header, sols));

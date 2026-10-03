@@ -1,18 +1,20 @@
-//! In-process chain. Not a public P2P network, and not cypheranon.com.
+//! In-process chain. One process, not a public P2P network, and not
+//! cypheranon.com. Block timestamps are caller-supplied. This process
+//! does not produce a block every 120 seconds.
 //!
 //! A block is accepted only when Equihash(48, 5) verifies, the solution
 //! commitment meets the bit target, every transfer's CIP proof verifies,
 //! the Dilithium2 user signature and the Dilithium5 envelope verify, and
-//! the nullifier is new. Equihash(48, 5) is not Equihash-512. The CIP hash
-//! is not Poseidon2. The field secret inside the circuit is not the
-//! Dilithium key.
+//! the nullifier is new. Equihash(48, 5) is not Equihash-512. The in-circuit
+//! hash is a^3 + 3b^3 + 7, not Poseidon2. The field secret inside the
+//! circuit is not the Dilithium key.
 
 use std::collections::BTreeSet;
 
 use blake2b_simd::Params;
 use cypher_cip::{verify_bytes, PublicInputs};
 use cypher_dilithium::{verify2, verify5};
-use cypher_equihash::{commit, leading_zero_bits, verify, Instance, TESTNET_K, TESTNET_N};
+use cypher_equihash::{commit, leading_zero_bits, verify, Instance, SOLVED_K, SOLVED_N};
 
 const WINDOW: usize = 500;
 
@@ -116,8 +118,8 @@ pub fn block_id(block: &Block) -> [u8; 32] {
     ])
 }
 
-fn testnet_pow() -> Instance {
-    Instance::new(TESTNET_N, TESTNET_K).expect("equihash testnet params")
+fn solved_pow() -> Instance {
+    Instance::new(SOLVED_N, SOLVED_K).expect("equihash(48, 5)")
 }
 
 fn work_of(bits: u32) -> Result<u128, &'static str> {
@@ -127,8 +129,9 @@ fn work_of(bits: u32) -> Result<u128, &'static str> {
     Ok(1u128 << bits)
 }
 
-/// Paper retarget: `D_new = D_old * (T_target * 500) / sum(t_i)`.
-/// Higher `D` is harder. This is not applied to the two-block local chain.
+/// Paper §7 formula: `D_new = D_old * (T_target * 500) / sum(t_i)`.
+/// Higher `D` is harder. The paper's `T_target` is 120 seconds. This
+/// function is not applied by the in-process chain.
 pub fn adjust_difficulty(
     old: u64,
     target_seconds: u64,
@@ -254,7 +257,7 @@ impl Chain {
         );
         let mut header = prefix.clone();
         header.extend_from_slice(&block.nonce.to_le_bytes());
-        let inst = testnet_pow();
+        let inst = solved_pow();
         if !verify(&header, inst, &block.indices) {
             return Err("equihash rejected");
         }
@@ -317,7 +320,7 @@ pub fn mine_block(
     coinbase_sk: &[u8],
 ) -> Result<Block, &'static str> {
     let prefix = pow_prefix(&prev, height, timestamp, difficulty_bits, &transfers);
-    let inst = testnet_pow();
+    let inst = solved_pow();
     let (nonce, indices) = cypher_equihash::mine(&prefix, inst, difficulty_bits)
         .ok_or("no equihash solution in range")?;
     let mut header = prefix;
@@ -380,6 +383,7 @@ mod tests {
 
     #[test]
     fn retarget_matches_the_formula() {
+        // 120 is the paper's T_target, not an interval this chain runs.
         let slow = vec![120u64; 500];
         assert_eq!(adjust_difficulty(1_000_000, 120, &slow).unwrap(), 1_000_000);
         let fast = vec![60u64; 500];
@@ -531,8 +535,8 @@ mod tests {
             cypher_dilithium::DILITHIUM2_SIG,
             chain.height(),
             chain.work(),
-            TESTNET_N,
-            TESTNET_K,
+            SOLVED_N,
+            SOLVED_K,
         );
     }
 }
