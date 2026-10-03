@@ -15,9 +15,8 @@ The name CIP is the circuit, not a standards process. This repository is the pub
 | `SECURITY.md` | How to report a forge, double-spend, or privacy break. |
 | `CONTRIBUTING.md` | A result has to run. Accept-only circuits are not tests. |
 | `docs/STATUS.md` | Gap list. This is the source of truth for "done". |
-| `docs/RESEARCH-RESULTS.md` | 2026-10-03 attempt. No circuit, so no testnet. |
-| `results/SOAK.md` | Retired 600 s loop. Not a result. |
 | `results/EMISSION.md` | §12.3 derivation. Exact total matches; printed column does not. |
+| `results/ARCHITECTURE.md` | What the hash stand-in checks, and what it does not. |
 | `sim/protocol_logic.py` | SHA-256 stand-in. |
 | `tests/test_protocol_logic.py` | Accept and reject cases. Run `python3 tests/test_protocol_logic.py`. |
 | `.github/workflows/test.yml` | Runs that file and `sim/emission.py`. |

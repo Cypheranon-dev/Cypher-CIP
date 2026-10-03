@@ -12,5 +12,5 @@ What `sim/protocol_logic.py` checks. It is not the paper's cryptography.
 | §9 MaskSwap | A spend whose price is outside `[p_a, p_b]` is rejected. Fees are not moved. |
 | §10 bridge | A mint. Rejected below 8 votes or above 15. |
 | §11 oracle | A spend whose three weights do not sum to 1 is rejected. |
-| §12 emission | `sim/emission.py`. Not inside the old soak. |
+| §12 emission | `sim/emission.py`. |
 | §17 DAO | A spend under 5% turnout or 67% yes is rejected. |

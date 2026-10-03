@@ -12,7 +12,7 @@ Updated for the public tree. "Named in docs" is not "shipped".
 | Node, consensus, genesis | Absent | Any deployment |
 | Third-party audit | None | Mainnet |
 | Bounty | None | — |
-| Testnet | Not run. See `docs/RESEARCH-RESULTS.md` | Any deployment claim |
+| Testnet | Not run | Any deployment claim |
 | CI | `.github/workflows/test.yml` runs the stand-in tests | A circuit proof |
 
 Exit for the next milestone: those two circuits are in-tree, statement 4 is folded, accept and reject tests pass, and the hash gadget is the proposed Goldilocks / Poseidon2-GL64 parameters or the README still calls it a stand-in.
