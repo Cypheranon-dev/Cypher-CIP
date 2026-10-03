@@ -21,6 +21,8 @@
 //! The field `sk` is not a Dilithium secret. Dilithium signs the envelope
 //! outside this circuit.
 
+pub mod poseidon2;
+
 use winterfell::crypto::{hashers::Rp64_256, DefaultRandomCoin, ElementHasher, MerkleTree};
 use winterfell::math::{fields::f64::BaseElement, FieldElement, ToElements};
 use winterfell::{
@@ -48,9 +50,18 @@ const CHAIN: usize = 11;
 const EVENT: usize = 12;
 /// Domain separator so pk = H(sk, 1) is not the nullifier.
 const PK_DOMAIN: u64 = 1;
+/// Goldilocks prime modulus: 2^64 - 2^32 + 1.
+const GOLDILOCKS_MODULUS: u64 = 0xffff_ffff_0000_0001;
 
 pub fn fe(value: u64) -> BaseElement {
     BaseElement::new(value)
+}
+
+fn checked_fe(value: u64) -> Result<BaseElement, &'static str> {
+    if value >= GOLDILOCKS_MODULUS {
+        return Err("non-canonical field element");
+    }
+    Ok(fe(value))
 }
 
 fn h2(a: BaseElement, b: BaseElement) -> BaseElement {
@@ -91,13 +102,13 @@ impl PublicInputs {
         ]
     }
 
-    pub fn from_u64s(values: [u64; 4]) -> Self {
-        Self {
-            miner_root: fe(values[0]),
-            nullifier: fe(values[1]),
-            event_id: fe(values[2]),
-            height: fe(values[3]),
-        }
+    pub fn try_from_u64s(values: [u64; 4]) -> Result<Self, &'static str> {
+        Ok(Self {
+            miner_root: checked_fe(values[0])?,
+            nullifier: checked_fe(values[1])?,
+            event_id: checked_fe(values[2])?,
+            height: checked_fe(values[3])?,
+        })
     }
 }
 
@@ -134,12 +145,20 @@ pub fn prepare(witness: &Witness) -> Result<Prepared, &'static str> {
     if witness.index >= 16 {
         return Err("miner index out of range");
     }
-    if witness.amount_in != witness.amount_out + witness.fee {
+    let expected_amount_in = witness
+        .amount_out
+        .checked_add(witness.fee)
+        .ok_or("amount overflow")?;
+    if witness.amount_in != expected_amount_in {
         return Err("amounts do not conserve");
     }
-    let sk = fe(witness.sk);
-    let pk = h2(sk, fe(PK_DOMAIN));
-    let leaves: [BaseElement; 16] = witness.leaves.map(fe);
+    let sk = checked_fe(witness.sk)?;
+    let pk = h2(sk, checked_fe(PK_DOMAIN)?);
+    let mut checked_leaves = [BaseElement::ZERO; 16];
+    for (dst, value) in checked_leaves.iter_mut().zip(witness.leaves) {
+        *dst = checked_fe(value)?;
+    }
+    let leaves = checked_leaves;
     if leaves[witness.index] != pk {
         return Err("miner leaf is not H(sk, 1)");
     }
@@ -167,10 +186,10 @@ pub fn prepare(witness: &Witness) -> Result<Prepared, &'static str> {
         level = next;
         idx /= 2;
     }
-    let r_in = fe(witness.r_in);
-    let payload = fe(witness.payload);
-    let height = fe(witness.height);
-    let chain_state = fe(witness.chain_state);
+    let r_in = checked_fe(witness.r_in)?;
+    let payload = checked_fe(witness.payload)?;
+    let height = checked_fe(witness.height)?;
+    let chain_state = checked_fe(witness.chain_state)?;
     Ok(Prepared {
         public: PublicInputs {
             miner_root: level[0],
@@ -183,9 +202,9 @@ pub fn prepare(witness: &Witness) -> Result<Prepared, &'static str> {
         leaf,
         sk,
         r_in,
-        amount_in: fe(witness.amount_in),
-        amount_out: fe(witness.amount_out),
-        fee: fe(witness.fee),
+        amount_in: checked_fe(witness.amount_in)?,
+        amount_out: checked_fe(witness.amount_out)?,
+        fee: checked_fe(witness.fee)?,
         height,
         payload,
         chain_state,
@@ -501,6 +520,23 @@ mod tests {
         let mut witness = sample();
         witness.fee = 0;
         assert!(prepare(&witness).is_err());
+    }
+
+    #[test]
+    fn rejects_noncanonical_field_inputs() {
+        let mut witness = sample();
+        witness.sk = GOLDILOCKS_MODULUS;
+        assert_eq!(prepare(&witness).err(), Some("non-canonical field element"));
+        assert!(PublicInputs::try_from_u64s([GOLDILOCKS_MODULUS, 0, 0, 0]).is_err());
+    }
+
+    #[test]
+    fn rejects_amount_addition_overflow() {
+        let mut witness = sample();
+        witness.amount_in = 0;
+        witness.amount_out = u64::MAX;
+        witness.fee = 1;
+        assert_eq!(prepare(&witness).err(), Some("amount overflow"));
     }
 
     #[test]
