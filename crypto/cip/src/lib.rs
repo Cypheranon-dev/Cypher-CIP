@@ -521,7 +521,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn rejects_noncanonical_field_inputs() {
         let mut witness = sample();
         witness.sk = GOLDILOCKS_MODULUS;
@@ -538,6 +537,7 @@ mod tests {
         assert_eq!(prepare(&witness).err(), Some("amount overflow"));
     }
 
+    #[test]
     fn rejects_a_leaf_that_is_not_the_public_key() {
         let mut witness = sample();
         witness.leaves[3] ^= 1;
