@@ -1,48 +1,41 @@
 # Cypher-CIP
 
-Research-stage specification for a Layer-1 that proves two things in one STARK circuit, with no trusted setup:
+Research-stage Layer-1 design. One FRI STARK (the CIP circuit) checks a private transfer, with no trusted setup. Dilithium5 wraps the proof. This repository is the public spec drop plus the parts that actually run. It is not an audited protocol and it is not a public network.
 
-- Post-quantum authorization under Dilithium5 (NIST FIPS 204).
-- Mandatory, default-private transfer (nullifiers, binding, no transparent amounts).
+## What runs
 
-The name CIP is the circuit, not a standards process. This repository is the public spec drop. It is not a node, a testnet, or an audited protocol.
-
-## What is in this tree
-
-| Path | Status |
+| Path | What it is |
 | --- | --- |
-| `docs/whitepaper-v1.4.pdf` | Design document. Numbers in §19 marked unreproduced are not claims. |
-| `SECURITY.md` | How to report a forge, double-spend, or privacy break. |
-| `CONTRIBUTING.md` | A result has to run. Accept-only circuits are not tests. |
-| `docs/STATUS.md` | Gap list. This is the source of truth for "done". |
-| `results/EMISSION.md` | §12.3 derivation. Exact total matches; printed column does not. |
-| `results/ARCHITECTURE.md` | What the hash stand-in checks, and what it does not. |
-| `sim/protocol_logic.py` | SHA-256 stand-in. |
-| `tests/test_protocol_logic.py` | Accept and reject cases. Run `python3 tests/test_protocol_logic.py`. |
-| `.github/workflows/test.yml` | Runs that file and `sim/emission.py`. |
+| `crypto/cip` | Winterfell AIR. Goldilocks, blowup 8, 84 queries, grinding 20, quadratic extension, Rescue-Prime commitments. Proves miner-set membership of `H(sk, 1)`, nullifier `H(sk, r_in)`, amount conservation, and event binding. |
+| `crypto/dilithium` | FIPS 204. Dilithium5 is ML-DSA-87 (public key 2,592 bytes, signature 4,627). Dilithium2 is ML-DSA-44 (1,312 and 2,420). |
+| `crypto/equihash` | Wagner / Blake2b. `Equihash(512, 9)` is rejected: `k+1` does not divide `n`. The instance that solves is `Equihash(48, 5)`. |
+| `node` | In-process chain. Checks the proof, both signatures, the Equihash solution, and nullifier uniqueness. Longer work wins. |
+| `sim/protocol_logic.py` | SHA-256 stand-in for rules the circuit does not cover (bridge quorum, swap range, DAO, oracle weights, viewing keys). |
+| `sim/emission.py` | §12.3 derivation. The exact total matches; the printed column does not. |
+| `docs/whitepaper-v1.4.pdf` | Design document. |
+| `docs/STATUS.md` | What is done and what is not. |
 
-Not in this tree, despite being named in the docs: `cip-combined`, `cip-merkle-test`, a node, or genesis. `sim/protocol_logic.py` is a SHA-256 stand-in, not those circuits. CI runs that stand-in only. Do not treat the missing paths as implemented.
+`cargo test --release --workspace` runs the Rust checks. `python3 tests/test_protocol_logic.py` and `python3 sim/emission.py` run the rest.
 
-## Open gaps
+## What this is not
 
-These block any network:
-
-- Statement 4 (existence binding) is not folded into `cip-combined`.
-- The in-circuit hash is not in this repo. The proposed parameters are Goldilocks / Poseidon2-GL64. The in-tree stand-in is SHA-256, and its numbers are not Poseidon2 numbers.
-- Whitepaper §19 entries marked unreproduced have not been independently checked.
-- No public proof/verify tests for a STARK, so the circuit cannot yet be reviewed. The hash stand-in tests are not that.
-
-File those as issues from `.github/ISSUE_TEMPLATE` rather than restating them in chat.
+- The in-circuit hash is `H(a, b) = a³ + 3b³ + 7`. It is not Poseidon2, and it is not collision-resistant. The STARK proves the AIR. It does not make that hash a compression function.
+- `Equihash(48, 5)` is not Equihash-512. The paper's `(512, 9)` is not a legal Equihash instance. A second illegal case, `(512, 15)`, fails the 32-bit index word.
+- The Dilithium5 signature is 4,627 bytes under FIPS 204. The paper's 4,595 is the round-3 draft.
+- The field secret inside the circuit is not the Dilithium key. Dilithium signs the envelope outside the AIR.
+- Nullifier uniqueness is a node check. One proof cannot see the chain.
+- The local chain is one process. It is not a P2P testnet, it does not run 120-second blocks, and it is not cypheranon.com.
+- No audit, no bounty, no mainnet.
 
 ## Verify a claim
 
 - A circuit change needs a prove-and-verify test for the accept case and at least one reject case.
-- A changed number (emission, bits, throughput, sizes) needs the derivation in the PR.
-- A benchmark needs hardware, and must say what is real versus a stand-in.
+- A changed number needs the derivation in the PR.
+- A benchmark needs the machine, and must say what is real versus a stand-in.
 
 ## Security
 
-Pre-audit. No bounty. No value should sit on this design. Report forge, double-spend, and privacy breaks to Contact@Cypheranon.com, not as a public issue. See `SECURITY.md`.
+Pre-audit. No value should sit on this design. Report a forge, double-spend, or privacy break to Contact@Cypheranon.com, not as a public issue. See `SECURITY.md`.
 
 ## License
 

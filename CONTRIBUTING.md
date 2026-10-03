@@ -29,13 +29,11 @@ Concretely:
 
 Check open issues first, but broadly:
 
-- Closing gaps in `cip-combined` (statement 4 — existence binding — isn't
-  folded in yet)
-- Porting the in-circuit hash gadget from f128/Rescue128 to the proposed
-  Goldilocks/Poseidon2-GL64 parameters
-- Independent verification of anything in the whitepaper's §19 changelog
-  marked "unreproduced"
-- Documentation, if you found something confusing that others probably do too
+- A collision-resistant in-circuit hash. The AIR uses `a³ + 3b³ + 7`. Do not rename it Poseidon2 unless the gadget is Poseidon2.
+- A legal Equihash parameter set with a real cost model. `(512, 9)` is rejected on purpose. Do not weaken `Instance::new` so that pair constructs.
+- Note commitments and encryption. The node checks nullifier uniqueness, not a commitment-set inclusion of a previous note.
+- Independent verification of whitepaper §19 entries marked unreproduced.
+
 
 ## How to submit a change
 

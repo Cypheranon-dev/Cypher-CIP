@@ -23,13 +23,13 @@ fine as a normal public issue.
 
 This is early. The things most worth attacking:
 
-- the CIP circuit logic in `cip-combined` and `cip-merkle-test` (does it
-  accept something it shouldn't, or reject something valid?)
-- the emission/tokenomics math in the whitepaper — we've already found and
-  fixed one real bug here (see the whitepaper's changelog) by just running
-  the numbers; there may be more
-- the protocol-logic simulator's attack scenarios — are there cases it
-  doesn't cover?
+- `crypto/cip` (does the AIR accept a witness it should reject, or reject a valid one?)
+- `crypto/dilithium` and the envelope check in `node` (a signature that verifies over the wrong bytes)
+- `crypto/equihash` (a solution `verify` accepts after a swap, or a parameter check that lets `(512, 9)` through)
+- the emission math in `sim/emission.py` and the whitepaper
+- the protocol-logic stand-in in `sim/protocol_logic.py`
+
+The cubic hash in the AIR is not claimed to be collision-resistant. A collision against `a³ + 3b³ + 7` is not a new break; replacing that hash is.
 
 We don't have a bug bounty program yet. If that changes, it'll be announced
 here and at cypheranon.com.

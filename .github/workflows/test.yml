@@ -14,3 +14,11 @@ jobs:
           python-version: "3.12"
       - run: python3 tests/test_protocol_logic.py
       - run: python3 sim/emission.py
+
+  crypto:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --release --workspace -- --test-threads=1

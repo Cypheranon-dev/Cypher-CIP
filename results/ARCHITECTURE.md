@@ -1,5 +1,20 @@
 # Architecture map
 
+Two layers. The Rust crates are the cryptography that runs. The Python module is still a rule stand-in for the parts with no circuit.
+
+## Rust
+
+| Paper | In this tree |
+| --- | --- |
+| §4 four statements | `crypto/cip`. Membership of `pk = H(sk, 1)` in a depth-4 miner root, nullifier `H(sk, r_in)`, `amount_in = amount_out + fee`, `event_id = H(H(payload, height), chain_state)`. `H` is `a³ + 3b³ + 7` over Goldilocks, not Poseidon2. |
+| §4.7 FRI | Winterfell. Blowup 8, 84 queries, grinding 20, quadratic extension. Commitment hash is Rescue-Prime (`Rp64_256`), which is the §4.7.1 stand-in, not Poseidon2. |
+| §5 envelope | Dilithium5 over `proof \|\| event_id`. User authorization is Dilithium2 over `proof \|\| public inputs`. Neither key is the field `sk`. |
+| §7 PoW | `crypto/equihash`. Blake2b, Zcash verification order. The testnet mines `Equihash(48, 5)` and then requires leading zero bits on `commit(header, indices)`. `(512, 9)` does not construct. |
+| §7 retarget | `node::adjust_difficulty`. Tested on a synthetic 500-interval window. Not run against a live 500-block history. |
+| Chain | `node`. Nullifier set, coinbase Dilithium2, heavier chain replaces. One process. |
+
+## Python stand-in
+
 What `sim/protocol_logic.py` checks. It is not the paper's cryptography.
 
 | Paper | In this stand-in |
