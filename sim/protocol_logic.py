@@ -10,12 +10,10 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass, field
 
-FINALITY = 6
 BRIDGE_QUORUM = 8
 BRIDGE_N = 15
 DAO_QUORUM = 0.05
 DAO_SUPER = 0.67
-ORACLE_W = (0.50, 0.40, 0.10)
 SPEND_KINDS = frozenset({"transfer", "swap", "oracle", "dao"})
 MINT_KINDS = frozenset({"mint", "bridge"})
 
