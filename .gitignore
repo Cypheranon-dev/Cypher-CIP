@@ -1,7 +1,6 @@
 # Rust
 /target/
 **/target/
-Cargo.lock
 
 # Python
 __pycache__/
@@ -10,7 +9,7 @@ __pycache__/
 .venv/
 venv/
 
-# OS cruft
+# OS
 .DS_Store
 Thumbs.db
 
@@ -19,5 +18,5 @@ Thumbs.db
 .idea/
 *.swp
 
-# Build output
+# Local
 *.log
