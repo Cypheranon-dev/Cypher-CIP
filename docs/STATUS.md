@@ -9,7 +9,7 @@ Updated for the public tree. A name in the paper is the paper's name. It is not 
 | CIP AIR | `crypto/cip`. Poseidon2, Goldilocks, width 8. Digest is four lanes. Accept and wrong-nullifier reject. 32-bit amounts. Depth-3 note tree. |
 | Dilithium5 / Dilithium2 | `crypto/dilithium`, FIPS 204 via `fips204`. Signature 4,627 bytes, not the paper's 4,595. |
 | Equihash | `crypto/equihash`. The paper's Equihash-512 is (512, 9), rejected (`NotDivisible`). The instance that solves is Equihash(48, 5). That is not Equihash-512. |
-| Node | `node`. In-process. Proof, both signatures, note root, event, nullifier set, output note, coinbase reward, heavier chain, retarget after 500 intervals. Bit target clamped at 12. |
+| Node | `node`. Persisted chain, mempool, coinbase, epoch trees, heavier chain, retarget. `cypher-node` mines and sends blocks to one TCP peer. Not a public P2P network. Not 120-second blocks. |
 | Local chain | Tests in `node`. Not a public P2P testnet. Not 120-second blocks. |
 | Difficulty formula | `adjust_difficulty` is the paper's formula with `T_target = 120`. Applied after 500 intervals. The process does not wait 120 seconds. |
 | App rules | `sim/protocol_logic.py`. SHA-256 stand-in for bridge, swap, DAO, oracle, viewing keys. Not consensus. |

@@ -19,7 +19,7 @@ Concretely:
 - A PR changing a number in the whitepaper (emission, security bits,
   throughput, anything) needs the derivation, not just the new number.
 - If you're reporting a benchmark, say what hardware and name the function
-  that ran. Equihash(48, 5) is not Equihash-512. An in-process chain is not a public P2P testnet and does
+  that ran. Equihash(48, 5) is not Equihash-512. Two local processes on TCP are not a public P2P testnet and do
   not run 120-second blocks. Don't round in a way that hides what happened.
 - If something doesn't work yet, say so in the PR instead of leaving it
   for someone else to discover. "This passes 3 of 4 test cases, here's the

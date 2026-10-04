@@ -16,12 +16,15 @@
 use std::collections::BTreeSet;
 
 use blake2b_simd::Params;
+pub use cypher_cip::LEAVES;
 use cypher_cip::{
-    digest_words, event_digest, note_commitment, root_words, verify_bytes, PublicInputs, LEAVES,
-    PUBLIC_LEN,
+    digest_words, event_digest, note_commitment, root_words, verify_bytes, PublicInputs, PUBLIC_LEN,
 };
 use cypher_dilithium::{verify2, verify5};
 use cypher_equihash::{commit, leading_zero_bits, verify, Instance, SOLVED_K, SOLVED_N};
+
+pub mod runtime;
+pub mod wire;
 
 const WINDOW: usize = 500;
 const TARGET_SECONDS: u64 = 120;
@@ -59,7 +62,7 @@ pub struct Block {
 }
 
 struct Ledger {
-    leaves: [[u64; 4]; LEAVES],
+    trees: Vec<[[u64; 4]; LEAVES]>,
     nullifiers: BTreeSet<[u64; 4]>,
     bits: u32,
     prev: [u8; 32],
@@ -73,7 +76,7 @@ pub struct Chain {
     genesis_leaves: [[u64; 4]; LEAVES],
     initial_bits: u32,
     blocks: Vec<Block>,
-    leaves: [[u64; 4]; LEAVES],
+    trees: Vec<[[u64; 4]; LEAVES]>,
     nullifiers: BTreeSet<[u64; 4]>,
     bits: u32,
     timestamps: Vec<u64>,
@@ -264,6 +267,25 @@ fn first_empty(leaves: &[[u64; 4]; LEAVES]) -> Option<usize> {
     leaves.iter().position(|leaf| *leaf == [0; 4])
 }
 
+fn note_exists(trees: &[[[u64; 4]; LEAVES]], note: &[u64; 4]) -> bool {
+    trees.iter().any(|tree| tree.contains(note))
+}
+
+fn tree_roots(trees: &[[[u64; 4]; LEAVES]]) -> Result<Vec<[u64; 4]>, &'static str> {
+    trees.iter().map(root_words).collect()
+}
+
+/// Fill the open tree. When it is full, open another eight-leaf tree.
+/// Old roots stay valid because a full tree is not modified again.
+fn insert_note(trees: &mut Vec<[[u64; 4]; LEAVES]>, note: [u64; 4]) {
+    if trees.last().and_then(first_empty).is_none() {
+        trees.push([[0; 4]; LEAVES]);
+    }
+    let tree = trees.last_mut().expect("a note tree");
+    let slot = first_empty(tree).expect("an empty leaf");
+    tree[slot] = note;
+}
+
 impl Chain {
     pub fn open(
         infra_pk: Vec<u8>,
@@ -279,7 +301,7 @@ impl Chain {
             genesis_leaves: leaves,
             initial_bits: difficulty_bits,
             blocks: Vec::new(),
-            leaves,
+            trees: vec![leaves],
             nullifiers: BTreeSet::new(),
             bits: difficulty_bits,
             timestamps: Vec::new(),
@@ -302,8 +324,12 @@ impl Chain {
         &self.nullifiers
     }
 
-    pub fn leaves(&self) -> &[[u64; 4]; LEAVES] {
-        &self.leaves
+    pub fn contains_note(&self, note: &[u64; 4]) -> bool {
+        self.trees.iter().any(|tree| tree.contains(note))
+    }
+
+    pub fn note_trees(&self) -> usize {
+        self.trees.len()
     }
 
     pub fn difficulty_bits(&self) -> u32 {
@@ -327,7 +353,7 @@ impl Chain {
 
     /// Replace the chain only when the candidate has strictly more work.
     pub fn consider(&mut self, blocks: Vec<Block>) -> Result<bool, &'static str> {
-        let mut leaves = self.genesis_leaves;
+        let mut trees = vec![self.genesis_leaves];
         let mut nullifiers = BTreeSet::new();
         let mut bits = self.initial_bits;
         let mut timestamps = Vec::new();
@@ -336,7 +362,7 @@ impl Chain {
         let mut work = 0u128;
         for block in &blocks {
             let mut ledger = Ledger {
-                leaves,
+                trees,
                 nullifiers,
                 bits,
                 prev,
@@ -347,7 +373,7 @@ impl Chain {
             work = work
                 .checked_add(work_of(block.difficulty_bits)?)
                 .ok_or("work overflow")?;
-            leaves = ledger.leaves;
+            trees = ledger.trees;
             nullifiers = ledger.nullifiers;
             bits = ledger.bits;
             timestamps = ledger.timestamps;
@@ -358,7 +384,7 @@ impl Chain {
             return Ok(false);
         }
         self.blocks = blocks;
-        self.leaves = leaves;
+        self.trees = trees;
         self.nullifiers = nullifiers;
         self.bits = bits;
         self.timestamps = timestamps;
@@ -367,7 +393,7 @@ impl Chain {
 
     fn snapshot(&self) -> Ledger {
         Ledger {
-            leaves: self.leaves,
+            trees: self.trees.clone(),
             nullifiers: self.nullifiers.clone(),
             bits: self.bits,
             prev: self.tip(),
@@ -377,10 +403,95 @@ impl Chain {
     }
 
     fn install(&mut self, ledger: Ledger) {
-        self.leaves = ledger.leaves;
+        self.trees = ledger.trees;
         self.nullifiers = ledger.nullifiers;
         self.bits = ledger.bits;
         self.timestamps = ledger.timestamps;
+    }
+
+    pub fn infra_pk(&self) -> &[u8] {
+        &self.infra_pk
+    }
+
+    pub fn genesis_leaves(&self) -> [[u64; 4]; LEAVES] {
+        self.genesis_leaves
+    }
+
+    pub fn initial_bits(&self) -> u32 {
+        self.initial_bits
+    }
+
+    /// A transfer the next block can seal: proof, both signatures, an
+    /// existing note root, and an event bound to this tip and the next height.
+    pub fn check_transfer(&self, transfer: &Transfer) -> Result<(), &'static str> {
+        let roots = tree_roots(&self.trees)?;
+        let mut seen = BTreeSet::new();
+        let mut outputs = Vec::new();
+        self.take_transfer(
+            &Ledger {
+                trees: self.trees.clone(),
+                nullifiers: self.nullifiers.clone(),
+                bits: self.bits,
+                prev: self.tip(),
+                prev_time: None,
+                timestamps: Vec::new(),
+            },
+            self.height() + 1,
+            &roots,
+            &chain_words(&self.tip()),
+            transfer,
+            &mut seen,
+            &mut outputs,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn take_transfer(
+        &self,
+        ledger: &Ledger,
+        height: u64,
+        roots: &[[u64; 4]],
+        chain: &[u64; 4],
+        transfer: &Transfer,
+        seen: &mut BTreeSet<[u64; 4]>,
+        outputs: &mut Vec<[u64; 4]>,
+    ) -> Result<(), &'static str> {
+        let public = PublicInputs::try_from_u64s(transfer.public)?;
+        let nullifier = words4(&transfer.public, 4);
+        if ledger.nullifiers.contains(&nullifier) || !seen.insert(nullifier) {
+            return Err("nullifier spent");
+        }
+        if !roots.contains(&digest_words(public.note_root)) {
+            return Err("note root");
+        }
+        if public.height.as_int() != height {
+            return Err("proof height");
+        }
+        let expected = event_digest(public.payload.as_int(), height, *chain, public.fee.as_int())?;
+        if public.event_id != expected {
+            return Err("event");
+        }
+        let output = words4(&transfer.public, 8);
+        if output == [0; 4] || note_exists(&ledger.trees, &output) || outputs.contains(&output) {
+            return Err("duplicate note");
+        }
+        verify_bytes(&transfer.proof, public)?;
+        if !verify2(
+            &transfer.user_pk,
+            &user_message(transfer),
+            &transfer.user_sig,
+        ) {
+            return Err("user signature");
+        }
+        if !verify5(
+            &self.infra_pk,
+            &envelope_message(transfer),
+            &transfer.envelope_sig,
+        ) {
+            return Err("envelope signature");
+        }
+        outputs.push(output);
+        Ok(())
     }
 
     fn apply(&self, ledger: &mut Ledger, block: &Block) -> Result<(), &'static str> {
@@ -419,51 +530,20 @@ impl Chain {
         if !verify2(&block.coinbase_pk, &coinbase_msg, &block.coinbase_sig) {
             return Err("coinbase signature");
         }
-        let root = root_words(&ledger.leaves)?;
+        let roots = tree_roots(&ledger.trees)?;
         let chain = chain_words(&ledger.prev);
         let mut seen = BTreeSet::new();
         let mut outputs = Vec::with_capacity(block.transfers.len() + 1);
         for transfer in &block.transfers {
-            let public = PublicInputs::try_from_u64s(transfer.public)?;
-            let nullifier = words4(&transfer.public, 4);
-            if ledger.nullifiers.contains(&nullifier) || !seen.insert(nullifier) {
-                return Err("nullifier spent");
-            }
-            if digest_words(public.note_root) != root {
-                return Err("note root");
-            }
-            if public.height.as_int() != block.height {
-                return Err("proof height");
-            }
-            let expected = event_digest(
-                public.payload.as_int(),
+            self.take_transfer(
+                ledger,
                 block.height,
-                chain,
-                public.fee.as_int(),
+                &roots,
+                &chain,
+                transfer,
+                &mut seen,
+                &mut outputs,
             )?;
-            if public.event_id != expected {
-                return Err("event");
-            }
-            let output = words4(&transfer.public, 8);
-            if output == [0; 4] || ledger.leaves.contains(&output) || outputs.contains(&output) {
-                return Err("duplicate note");
-            }
-            verify_bytes(&transfer.proof, public)?;
-            if !verify2(
-                &transfer.user_pk,
-                &user_message(transfer),
-                &transfer.user_sig,
-            ) {
-                return Err("user signature");
-            }
-            if !verify5(
-                &self.infra_pk,
-                &envelope_message(transfer),
-                &transfer.envelope_sig,
-            ) {
-                return Err("envelope signature");
-            }
-            outputs.push(output);
         }
         if let Some(coinbase) = &block.coinbase {
             let expected = digest_words(note_commitment(
@@ -474,19 +554,15 @@ impl Chain {
             if coinbase.commitment != expected {
                 return Err("coinbase");
             }
-            if ledger.leaves.contains(&coinbase.commitment)
+            if note_exists(&ledger.trees, &coinbase.commitment)
                 || outputs.contains(&coinbase.commitment)
             {
                 return Err("duplicate note");
             }
             outputs.push(coinbase.commitment);
         }
-        if outputs.len() > ledger.leaves.iter().filter(|leaf| **leaf == [0; 4]).count() {
-            return Err("tree full");
-        }
         for output in outputs {
-            let slot = first_empty(&ledger.leaves).ok_or("tree full")?;
-            ledger.leaves[slot] = output;
+            insert_note(&mut ledger.trees, output);
         }
         for nullifier in seen {
             ledger.nullifiers.insert(nullifier);
@@ -702,7 +778,7 @@ mod tests {
         let nullifier = words4(&transfer.public, 4);
         assert!(chain.nullifiers().contains(&nullifier));
         let output = words4(&transfer.public, 8);
-        assert!(chain.leaves().contains(&output));
+        assert!(chain.contains_note(&output));
 
         let mut other = Chain::open(infra.public, leaves, 4).unwrap();
         other.append(block1).unwrap();
@@ -755,7 +831,7 @@ mod tests {
         )
         .unwrap();
         chain.append(good_mint).unwrap();
-        assert!(chain.leaves().contains(&minted));
+        assert!(chain.contains_note(&minted));
         assert_eq!(chain.height(), 2);
 
         let mut broken = mine_block(
@@ -810,7 +886,64 @@ mod tests {
         assert!(chain.consider(vec![alt1, alt2, alt3]).unwrap());
         assert_eq!(chain.height(), 3);
         assert!(chain.nullifiers().is_empty());
-        assert!(!chain.leaves().contains(&output));
+        assert!(!chain.contains_note(&output));
         assert_eq!(chain.work(), 48);
+    }
+
+    #[test]
+    fn a_full_tree_opens_the_next_one_and_reloads() {
+        use crate::runtime::Node;
+        let infra = Keypair::dilithium5();
+        let miner = Keypair::dilithium2();
+        let mut node = Node::open(&infra, &miner, 7, [[0; 4]; LEAVES], 0).unwrap();
+        for step in 1..=9 {
+            node.mine_next(10_000 + step * 10).unwrap();
+        }
+        assert_eq!(node.chain.height(), 9);
+        assert_eq!(node.chain.note_trees(), 2);
+        let loaded = Node::from_bytes(&node.to_bytes(), &miner, 7).unwrap();
+        assert_eq!(loaded.chain.tip(), node.chain.tip());
+        assert_eq!(loaded.chain.note_trees(), 2);
+        assert_eq!(loaded.chain.height(), 9);
+    }
+
+    #[test]
+    fn a_peer_receives_the_longer_chain() {
+        use std::net::TcpStream;
+
+        use crate::runtime::{exchange, listen, serve_one, Node};
+        let infra = Keypair::dilithium5();
+        let miner = Keypair::dilithium2();
+        let mut ahead = Node::open(&infra, &miner, 7, [[0; 4]; LEAVES], 0).unwrap();
+        for step in 1..=3 {
+            ahead.mine_next(20_000 + step * 10).unwrap();
+        }
+        let listener = listen("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let serving = ahead.chain.clone();
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            serve_one(&mut socket, &serving).unwrap();
+        });
+        let mut behind = Node::open(&infra, &miner, 9, [[0; 4]; LEAVES], 0).unwrap();
+        let mut socket = TcpStream::connect(address).unwrap();
+        exchange(&mut socket, &mut behind.chain).unwrap();
+        server.join().unwrap();
+        assert_eq!(behind.chain.height(), 3);
+        assert_eq!(behind.chain.tip(), ahead.chain.tip());
+
+        behind.mine_next(30_000).unwrap();
+        let listener = listen("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let serving = behind.chain.clone();
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            serve_one(&mut socket, &serving).unwrap();
+        });
+        let mut socket = TcpStream::connect(address).unwrap();
+        exchange(&mut socket, &mut ahead.chain).unwrap();
+        server.join().unwrap();
+        assert_eq!(ahead.chain.height(), 4);
+        assert_eq!(ahead.chain.tip(), behind.chain.tip());
     }
 }

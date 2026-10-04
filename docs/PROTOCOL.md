@@ -10,7 +10,7 @@ Poseidon2 over Goldilocks, width 8, alpha 7, four initial full rounds, 22 partia
 
 ## Notes
 
-Eight leaves, depth 3. An all-zero leaf is empty.
+Eight leaves, depth 3. An all-zero leaf is empty. When the open tree is full, the next output opens another tree. A full tree is not changed, so a proof against its root stays valid. The chain does not stop at eight notes.
 
 A note is `Poseidon2(amount, sk, rho, domain, 0, 0, 0, 0)`. The domain separates a note from a nullifier and from an event. `amount` is under 2^32. `sk` is a field element, not a Dilithium key.
 
@@ -44,7 +44,11 @@ Coinbase is optional. If present, its commitment must be the note for `block_rew
 
 Heavier total work wins. Equal work does not replace the chain. Work per block is `2^bits`.
 
-After 500 intervals, bits are retargeted with `D_new = D_old * (120 * 500) / sum(t_i)` and then stored as `floor(log2(D))`, clamped at 12. Timestamps are caller-supplied. This process does not produce a block every 120 seconds, and it is not a public P2P network.
+After 500 intervals, bits are retargeted with `D_new = D_old * (120 * 500) / sum(t_i)` and then stored as `floor(log2(D))`, clamped at 12. Timestamps are caller-supplied. This process does not produce a block every 120 seconds.
+
+## Peers
+
+`cypher-node` stores the chain in `chain.bin` and replays it on startup. A process can mine the next block, including transfers staged for this tip, and send the missing blocks to one peer over TCP. That is two local processes, not a public P2P network.
 
 ## Not in consensus
 
