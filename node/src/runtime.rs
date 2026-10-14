@@ -1,6 +1,3 @@
-//! One process that stores the chain, mines the next block, and hands
-//! blocks to a peer over TCP. Not a public network.
-
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::time::Duration;
@@ -15,6 +12,24 @@ use crate::{block_reward, mine_block, Block, Chain, Coinbase, Transfer, LEAVES};
 pub const HELLO: u8 = 1;
 pub const GET_BLOCKS: u8 = 2;
 pub const BLOCKS: u8 = 3;
+
+fn transfer_nullifier(transfer: &Transfer) -> [u64; 4] {
+    [
+        transfer.public[4],
+        transfer.public[5],
+        transfer.public[6],
+        transfer.public[7],
+    ]
+}
+
+fn transfer_output(transfer: &Transfer) -> [u64; 4] {
+    [
+        transfer.public[8],
+        transfer.public[9],
+        transfer.public[10],
+        transfer.public[11],
+    ]
+}
 
 pub struct Node {
     pub chain: Chain,
@@ -43,19 +58,15 @@ impl Node {
 
     pub fn stage(&mut self, transfer: Transfer) -> Result<(), &'static str> {
         self.chain.check_transfer(&transfer)?;
-        let nullifier = [
-            transfer.public[4],
-            transfer.public[5],
-            transfer.public[6],
-            transfer.public[7],
-        ];
+        let nullifier = transfer_nullifier(&transfer);
+        let output = transfer_output(&transfer);
         if self.mempool.iter().any(|tx| {
-            tx.public[4] == nullifier[0]
-                && tx.public[5] == nullifier[1]
-                && tx.public[6] == nullifier[2]
-                && tx.public[7] == nullifier[3]
+            transfer_nullifier(tx) == nullifier || transfer_output(tx) == output
         }) {
-            return Err("nullifier spent");
+            return Err("duplicate transfer");
+        }
+        if self.chain.nullifiers().contains(&nullifier) || self.chain.contains_note(&output) {
+            return Err("duplicate transfer");
         }
         self.mempool.push(transfer);
         Ok(())
@@ -216,3 +227,68 @@ fn recv(stream: &mut TcpStream) -> Result<(u8, Vec<u8>), String> {
         .map_err(|err| err.to_string())?;
     Ok((body[0], body[1..].to_vec()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{chain_words, mine_block, Block};
+    use cypher_cip::{digest_words, note_commitment, prove, Witness, LEAVES};
+    use cypher_dilithium::{sign2, sign5, Keypair};
+
+    fn funded(chain: [u64; 4], rho_out: u64) -> Witness {
+        let note = digest_words(note_commitment(10, 11, 22).unwrap());
+        let mut leaves = [[0u64; 4]; LEAVES];
+        leaves[3] = note;
+        Witness {
+            sk: 11,
+            r_in: 22,
+            rho_out,
+            amount_in: 10,
+            amount_out: 9,
+            fee: 1,
+            height: 1,
+            payload: 99,
+            chain_state: chain,
+            index: 3,
+            leaves,
+        }
+    }
+
+    fn signed_transfer(
+        infra: &Keypair,
+        user: &Keypair,
+        witness: &Witness,
+    ) -> (Transfer, [[u64; 4]; LEAVES]) {
+        let (proof, public) = prove(witness).expect("prove");
+        let mut transfer = Transfer {
+            proof: proof.to_bytes(),
+            public: public.to_u64s(),
+            user_pk: user.public.clone(),
+            user_sig: Vec::new(),
+            envelope_sig: Vec::new(),
+        };
+        transfer.user_sig = sign2(&user.secret, &crate::user_message(&transfer));
+        transfer.envelope_sig = sign5(&infra.secret, &crate::envelope_message(&transfer));
+        (transfer, witness.leaves)
+    }
+
+    #[test]
+    fn stage_rejects_duplicate_nullifiers_and_outputs() {
+        let infra = Keypair::dilithium5();
+        let user = Keypair::dilithium2();
+        let miner = Keypair::dilithium2();
+        let witness = funded(chain_words(&[0u8; 32]), 77);
+        let (transfer, leaves) = signed_transfer(&infra, &user, &witness);
+        let mut node = Node::open(&infra, &miner, 7, leaves, 0).unwrap();
+
+        node.stage(transfer.clone()).unwrap();
+        assert_eq!(node.stage(transfer.clone()).err(), Some("duplicate transfer"));
+
+        let mut replay = transfer.clone();
+        replay.public[8] ^= 1;
+        replay.user_sig = sign2(&user.secret, &crate::user_message(&replay));
+        replay.envelope_sig = sign5(&infra.secret, &crate::envelope_message(&replay));
+        assert_eq!(node.stage(replay).err(), Some("duplicate transfer"));
+    }
+}
+
