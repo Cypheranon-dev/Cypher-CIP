@@ -31,6 +31,17 @@ fn transfer_output(transfer: &Transfer) -> [u64; 4] {
     ]
 }
 
+fn read_hello(payload: &[u8]) -> Result<(u64, u128, [u8; 32]), String> {
+    if payload.len() != 8 + 16 + 32 {
+        return Err("bad hello payload".into());
+    }
+    let height = u64::from_le_bytes(payload[0..8].try_into().map_err(|_| "bad hello".to_string())?);
+    let work = u128::from_le_bytes(payload[8..24].try_into().map_err(|_| "bad hello".to_string())?);
+    let mut tip = [0u8; 32];
+    tip.copy_from_slice(&payload[24..32]);
+    Ok((height, work, tip))
+}
+
 pub struct Node {
     pub chain: Chain,
     miner_pk: Vec<u8>,
@@ -130,7 +141,8 @@ pub fn listen(addr: &str) -> Result<TcpListener, std::io::Error> {
 }
 
 /// Accept one peer. If they are behind, send the blocks they are missing.
-/// If we are behind, append the blocks they send.
+/// If we are behind, append the blocks they send only when the candidate chain
+/// has strictly greater cumulative work.
 pub fn exchange(stream: &mut TcpStream, chain: &mut Chain) -> Result<(), String> {
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
@@ -138,18 +150,24 @@ pub fn exchange(stream: &mut TcpStream, chain: &mut Chain) -> Result<(), String>
     stream
         .set_write_timeout(Some(Duration::from_secs(5)))
         .map_err(|err| err.to_string())?;
+
     send_hello(stream, chain)?;
     let (tag, payload) = recv(stream)?;
     if tag != HELLO {
         return Err("expected hello".into());
     }
-    let mut hello = Input::new(&payload);
-    let remote_height = hello.u64().map_err(|err| err.to_string())?;
-    let _remote_work = hello.u128().map_err(|err| err.to_string())?;
-    if remote_height > chain.height() {
+    let (remote_height, remote_work, remote_tip) = read_hello(&payload)?;
+
+    if remote_height > chain.height() || (remote_height == chain.height() && remote_work > chain.work()) {
         let mut body = Vec::new();
-        body.extend_from_slice(&chain.height().to_le_bytes());
+        let from = if remote_height > chain.height() {
+            chain.height() as usize
+        } else {
+            0
+        };
+        body.extend_from_slice(&(from as u64).to_le_bytes());
         send(stream, GET_BLOCKS, &body)?;
+
         let (tag, payload) = recv(stream)?;
         if tag != BLOCKS {
             return Err("expected blocks".into());
@@ -157,8 +175,11 @@ pub fn exchange(stream: &mut TcpStream, chain: &mut Chain) -> Result<(), String>
         let blocks = Input::new(&payload)
             .blocks()
             .map_err(|err| err.to_string())?;
-        for block in blocks {
-            chain.append(block).map_err(|err| err.to_string())?;
+        let accepted = chain
+            .consider(blocks)
+            .map_err(|err| err.to_string())?;
+        if !accepted && remote_tip != chain.tip() && remote_height >= chain.height() {
+            return Err("rejected weaker peer chain".into());
         }
     }
     Ok(())
@@ -176,21 +197,29 @@ pub fn serve_one(stream: &mut TcpStream, chain: &Chain) -> Result<(), String> {
     if tag != HELLO {
         return Err("expected hello".into());
     }
-    let mut hello = Input::new(&payload);
-    let remote_height = hello.u64().map_err(|err| err.to_string())?;
-    let _remote_work = hello.u128().map_err(|err| err.to_string())?;
+
+    let (remote_height, _remote_work, remote_tip) = read_hello(&payload)?;
     send_hello(stream, chain)?;
-    if remote_height < chain.height() {
+
+    if remote_height < chain.height()
+        || (remote_height == chain.height() && remote_tip != chain.tip())
+    {
+        let from = if remote_height < chain.height() {
+            remote_height as usize
+        } else {
+            0
+        };
         let (tag, payload) = recv(stream)?;
         if tag != GET_BLOCKS {
             return Err("expected getblocks".into());
         }
-        let from = Input::new(&payload).u64().map_err(|err| err.to_string())? as usize;
+        let request = Input::new(&payload).u64().map_err(|err| err.to_string())? as usize;
+        let offset = if request > 0 { request } else { from };
         let mut body = Vec::new();
-        let slice = if from > chain.blocks().len() {
+        let slice = if offset > chain.blocks().len() {
             &[]
         } else {
-            &chain.blocks()[from..]
+            &chain.blocks()[offset..]
         };
         wire::write_blocks(&mut body, slice);
         send(stream, BLOCKS, &body)?;
@@ -231,7 +260,7 @@ fn recv(stream: &mut TcpStream) -> Result<(u8, Vec<u8>), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{chain_words, mine_block, Block};
+    use crate::{block_id, chain_words, mine_block};
     use cypher_cip::{digest_words, note_commitment, prove, Witness, LEAVES};
     use cypher_dilithium::{sign2, sign5, Keypair};
 
@@ -289,6 +318,51 @@ mod tests {
         replay.user_sig = sign2(&user.secret, &crate::user_message(&replay));
         replay.envelope_sig = sign5(&infra.secret, &crate::envelope_message(&replay));
         assert_eq!(node.stage(replay).err(), Some("duplicate transfer"));
+    }
+
+    #[test]
+    fn longer_lower_work_forks_are_rejected() {
+        let infra = Keypair::dilithium5();
+        let miner = Keypair::dilithium2();
+        let mut chain = Chain::open(infra.public.clone(), [[0; 4]; LEAVES], 4).unwrap();
+
+        let first = mine_block(
+            [0; 32],
+            1,
+            1_000,
+            4,
+            Vec::new(),
+            None,
+            &miner.public,
+            &miner.secret,
+        )
+        .unwrap();
+        chain.append(first.clone()).unwrap();
+
+        let weak_one = mine_block(
+            [0; 32],
+            1,
+            2_000,
+            0,
+            Vec::new(),
+            None,
+            &miner.public,
+            &miner.secret,
+        )
+        .unwrap();
+        let weak_two = mine_block(
+            block_id(&weak_one),
+            2,
+            2_100,
+            0,
+            Vec::new(),
+            None,
+            &miner.public,
+            &miner.secret,
+        )
+        .unwrap();
+
+        assert!(!chain.consider(vec![weak_one, weak_two]).unwrap());
     }
 }
 
