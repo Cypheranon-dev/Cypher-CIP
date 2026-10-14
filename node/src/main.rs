@@ -59,6 +59,14 @@ fn usage() -> ExitCode {
     ExitCode::from(2)
 }
 
+fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    // Write to a temporary file in the same directory and rename.
+    let tmp = path.with_file_name(format!("{}.tmp", path.file_name().unwrap().to_string_lossy()));
+    fs::write(&tmp, bytes).map_err(|err| err.to_string())?;
+    fs::rename(&tmp, path).map_err(|err| err.to_string())?;
+    Ok(())
+}
+
 fn init(dir: &Path, bits: u32) -> Result<(), String> {
     fs::create_dir_all(dir).map_err(|err| err.to_string())?;
     let infra = Keypair::dilithium5();
@@ -70,7 +78,8 @@ fn init(dir: &Path, bits: u32) -> Result<(), String> {
     fs::write(dir.join("field.sk"), 7u64.to_le_bytes()).map_err(|err| err.to_string())?;
     let node =
         Node::open(&infra, &miner, 7, [[0; 4]; LEAVES], bits).map_err(|err| err.to_string())?;
-    fs::write(dir.join("chain.bin"), node.to_bytes()).map_err(|err| err.to_string())?;
+    // Use atomic write for chain file
+    atomic_write(&dir.join("chain.bin"), &node.to_bytes()).map_err(|err| err.to_string())?;
     println!("initialized {}", dir.display());
     Ok(())
 }
@@ -129,7 +138,8 @@ fn run(
         println!("mined {} {}", node.chain.height(), hex(&node.chain.tip()));
     }
     if blocks > 0 || peer.is_some() {
-        fs::write(dir.join("chain.bin"), node.to_bytes()).map_err(|err| err.to_string())?;
+        // Persist chain atomically
+        atomic_write(&dir.join("chain.bin"), &node.to_bytes()).map_err(|err| err.to_string())?;
     }
     if let Some(addr) = listen {
         let listener = runtime::listen(addr).map_err(|err| err.to_string())?;
