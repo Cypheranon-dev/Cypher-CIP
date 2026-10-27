@@ -6,6 +6,14 @@ Research and implementation of the Cypher Improvement Proposal (CIP): a FRI STAR
 
 This is the core protocol repo. User-facing clients are [Mask Wallet](https://github.com/Cypheranon-dev/Maskwallet) and [Mask Swap](https://github.com/Cypheranon-dev/Maskswap).
 
+## CIP-2026 targets
+
+See [docs/CIP-2026.md](docs/CIP-2026.md) for the research update:
+
+1. Privacy by default + zero-knowledge compliance (threshold view-key)
+2. Quantum-safe Dilithium5 + challenge-window validator recovery
+3. Offline / air-gapped / mesh relay of self-contained proofs
+
 ## What this builds toward
 
 - Memory-efficient shielded transactions via zk-STARKs (replacing heavy Equihash 48,5 constraints)
