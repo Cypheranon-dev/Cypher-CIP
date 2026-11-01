@@ -39,3 +39,10 @@ here and at cypheranon.com.
 No formal SLA at this stage — we're a small, pseudonymous team. We'll
 acknowledge reports as fast as we can and credit you (by whatever name you
 choose, including staying anonymous) once a fix ships, if you want credit.
+
+
+## Fixes shipped (November 2026)
+
+- Coinbase field `sk` is no longer serialized or included in the PoW prefix.
+- Timestamps more than 2 hours ahead of the previous block are rejected.
+- Recovery (CIP-2026) is opt-in and user-authorized, not a validator power.
