@@ -126,7 +126,7 @@ impl<'a> Input<'a> {
         }
         let coinbase = if self.take(1)?[0] == 1 {
             Some(Coinbase {
-                sk: self.u64()?,
+                sk: 0, // not on the wire; local validation only
                 commitment: [self.u64()?, self.u64()?, self.u64()?, self.u64()?],
             })
         } else {
@@ -190,7 +190,7 @@ fn write_block(out: &mut Vec<u8>, block: &Block) {
     match &block.coinbase {
         Some(coinbase) => {
             out.push(1);
-            out.extend_from_slice(&coinbase.sk.to_le_bytes());
+            // sk is not serialized. Commitment only.
             for word in coinbase.commitment {
                 out.extend_from_slice(&word.to_le_bytes());
             }
