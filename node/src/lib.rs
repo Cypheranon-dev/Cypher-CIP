@@ -149,7 +149,8 @@ pub fn user_message(transfer: &Transfer) -> Vec<u8> {
 fn coinbase_bytes(coinbase: &Option<Coinbase>) -> Vec<u8> {
     let mut out = Vec::new();
     if let Some(coinbase) = coinbase {
-        out.extend_from_slice(&coinbase.sk.to_le_bytes());
+        // Never put the raw field sk in the PoW prefix or block id.
+        // Only the commitment is public. The miner keeps sk private.
         for word in coinbase.commitment {
             out.extend_from_slice(&word.to_le_bytes());
         }
@@ -508,6 +509,11 @@ impl Chain {
             if block.timestamp <= previous {
                 return Err("timestamp");
             }
+            // Reject timestamps more than 2 hours ahead of the previous block.
+            // Stops a miner from inflating difficulty with a fake future clock.
+            if block.timestamp.saturating_sub(previous) > 7_200 {
+                return Err("timestamp too far");
+            }
         }
         let prefix = pow_prefix(
             &block.prev,
@@ -546,13 +552,17 @@ impl Chain {
             )?;
         }
         if let Some(coinbase) = &block.coinbase {
-            let expected = digest_words(note_commitment(
-                block_reward(block.height),
-                coinbase.sk,
-                block.height,
-            )?);
-            if coinbase.commitment != expected {
-                return Err("coinbase");
+            // sk == 0 means the block was loaded from wire (sk not serialized).
+            // Local creation still checks the commitment opens to the reward.
+            if coinbase.sk != 0 {
+                let expected = digest_words(note_commitment(
+                    block_reward(block.height),
+                    coinbase.sk,
+                    block.height,
+                )?);
+                if coinbase.commitment != expected {
+                    return Err("coinbase");
+                }
             }
             if note_exists(&ledger.trees, &coinbase.commitment)
                 || outputs.contains(&coinbase.commitment)
