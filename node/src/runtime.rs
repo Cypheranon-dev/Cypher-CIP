@@ -22,6 +22,7 @@ pub struct Node {
     miner_sk: Vec<u8>,
     field_sk: u64,
     mempool: Vec<Transfer>,
+    peers: Vec<String>,
 }
 
 impl Node {
@@ -38,6 +39,7 @@ impl Node {
             miner_sk: miner.secret.clone(),
             field_sk,
             mempool: Vec::new(),
+            peers: Vec::new(),
         })
     }
 
@@ -108,6 +110,7 @@ impl Node {
             miner_sk: miner.secret.clone(),
             field_sk,
             mempool: Vec::new(),
+            peers: Vec::new(),
         })
     }
 }
@@ -215,4 +218,16 @@ fn recv(stream: &mut TcpStream) -> Result<(u8, Vec<u8>), String> {
         .read_exact(&mut body)
         .map_err(|err| err.to_string())?;
     Ok((body[0], body[1..].to_vec()))
+}
+
+impl Node {
+    pub fn add_peer(&mut self, addr: String) {
+        if !self.peers.contains(&addr) {
+            self.peers.push(addr);
+        }
+    }
+
+    pub fn peers(&self) -> &[String] {
+        &self.peers
+    }
 }
