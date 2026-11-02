@@ -1,25 +1,19 @@
 # Version
 
-**Current build: CIP-2026.2** (November 2026)
+**Current build: CIP-2026.3** (November 2026)
 
-Research debt from CIP-2026.1 is addressed in this build.
+## CIP circuit v2
 
-## Completed in CIP-2026.2
+`crypto/cip/src/v2.rs` is the new circuit.
 
-| Debt | Resolution |
-| --- | --- |
-| 64-bit field spend key | `field_seed_from_pk` derives the field seed from the Dilithium public key. New wallets should use this. Full in-circuit Dilithium remains a future circuit revision. |
-| Single infra key | `Chain::open_threshold` accepts 1-of-N infrastructure keys. Any listed key may sign the envelope. |
-| Equihash(48,5) + 12-bit clamp | Difficulty cap raised to 24 bits. Equihash(48,5) remains the solved instance; a stronger instance is a parameter change. |
-| No note encryption | `encrypt_note` / `decrypt_note` (Blake2b keystream) added. |
-| Single peer | `Node::add_peer` holds a peer list. Gossip over the list is the next step. |
-| Recursive STARKs | Documented path in `docs/RECURSIVE.md`. Not in the current AIR. |
+- Spend is bound to a Dilithium public key via a Poseidon2 commitment (`DOM_PK = 8`).
+- `pk_commitment(pk)` hashes the key.
+- `bind_spend` / `verify_binding` attach and check the binding.
+- `bound_field_seed` derives the field spend seed from the Dilithium key.
+- The node must check the Dilithium signature against the committed key.
+- Full in-circuit Dilithium verification remains a later AIR. v2 is the binding circuit.
 
-## Still future work
+## Previous
 
-- Dilithium verification inside the STARK circuit
-- M-of-N threshold signatures (current is 1-of-N)
-- Public P2P testnet with authenticated gossip
-- Recursive block proofs
-
-See `docs/CIP-2026.md` and `docs/STATUS.md`.
+- CIP-2026.2: 1-of-N infra, note encryption, 24-bit cap, peer list.
+- CIP-2026.1: coinbase sk not serialized, 2-hour timestamp bound, opt-in recovery.
