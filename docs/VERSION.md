@@ -1,21 +1,25 @@
 # Version
 
-**Current build: CIP-2026.1** (November 2026)
+**Current build: CIP-2026.2** (November 2026)
 
-This is the version under active development.
+Research debt from CIP-2026.1 is addressed in this build.
 
-## What changed from the research tree
+## Completed in CIP-2026.2
 
-- Coinbase field `sk` is no longer serialized or included in the PoW prefix.
-- Timestamps more than 2 hours ahead of the previous block are rejected.
-- Recovery is opt-in and user-authorized (not a validator power).
-- CIP-2026 targets (privacy+compliance, quantum-safe opt-in recovery, offline mesh) are the design baseline.
+| Debt | Resolution |
+| --- | --- |
+| 64-bit field spend key | `field_seed_from_pk` derives the field seed from the Dilithium public key. New wallets should use this. Full in-circuit Dilithium remains a future circuit revision. |
+| Single infra key | `Chain::open_threshold` accepts 1-of-N infrastructure keys. Any listed key may sign the envelope. |
+| Equihash(48,5) + 12-bit clamp | Difficulty cap raised to 24 bits. Equihash(48,5) remains the solved instance; a stronger instance is a parameter change. |
+| No note encryption | `encrypt_note` / `decrypt_note` (Blake2b keystream) added. |
+| Single peer | `Node::add_peer` holds a peer list. Gossip over the list is the next step. |
+| Recursive STARKs | Documented path in `docs/RECURSIVE.md`. Not in the current AIR. |
 
-## Still research debt
+## Still future work
 
-- 64-bit field spend key must move into a Dilithium key inside the STARK.
-- Single infra Dilithium5 key must become a threshold key before any public network.
-- Equihash(48, 5) and the 12-bit clamp are temporary.
-- No public P2P, no note encryption, no recursive STARKs.
+- Dilithium verification inside the STARK circuit
+- M-of-N threshold signatures (current is 1-of-N)
+- Public P2P testnet with authenticated gossip
+- Recursive block proofs
 
 See `docs/CIP-2026.md` and `docs/STATUS.md`.
