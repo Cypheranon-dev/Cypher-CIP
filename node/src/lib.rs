@@ -28,7 +28,7 @@ pub mod wire;
 
 const WINDOW: usize = 500;
 const TARGET_SECONDS: u64 = 120;
-const MAX_BITS: u32 = 12;
+const MAX_BITS: u32 = 24;
 pub const BLOCKS_PER_YEAR: u64 = 262_800;
 pub const INITIAL_REWARD: u64 = 1_522_069;
 
@@ -72,7 +72,8 @@ struct Ledger {
 
 #[derive(Clone, Debug)]
 pub struct Chain {
-    infra_pk: Vec<u8>,
+    /// One or more infrastructure keys. Envelope verifies against any (1-of-N).
+    infra_pks: Vec<Vec<u8>>,
     genesis_leaves: [[u64; 4]; LEAVES],
     initial_bits: u32,
     blocks: Vec<Block>,
@@ -293,12 +294,24 @@ impl Chain {
         leaves: [[u64; 4]; LEAVES],
         difficulty_bits: u32,
     ) -> Result<Self, &'static str> {
+        Self::open_threshold(vec![infra_pk], leaves, difficulty_bits)
+    }
+
+    /// 1-of-N infrastructure keys. Any listed key may sign the envelope.
+    pub fn open_threshold(
+        infra_pks: Vec<Vec<u8>>,
+        leaves: [[u64; 4]; LEAVES],
+        difficulty_bits: u32,
+    ) -> Result<Self, &'static str> {
+        if infra_pks.is_empty() {
+            return Err("no infra key");
+        }
         if difficulty_bits > MAX_BITS {
             return Err("difficulty range");
         }
         let _ = root_words(&leaves)?;
         Ok(Self {
-            infra_pk,
+            infra_pks,
             genesis_leaves: leaves,
             initial_bits: difficulty_bits,
             blocks: Vec::new(),
@@ -411,7 +424,11 @@ impl Chain {
     }
 
     pub fn infra_pk(&self) -> &[u8] {
-        &self.infra_pk
+        &self.infra_pks[0]
+    }
+
+    pub fn infra_pks(&self) -> &[Vec<u8>] {
+        &self.infra_pks
     }
 
     pub fn genesis_leaves(&self) -> [[u64; 4]; LEAVES] {
@@ -484,11 +501,8 @@ impl Chain {
         ) {
             return Err("user signature");
         }
-        if !verify5(
-            &self.infra_pk,
-            &envelope_message(transfer),
-            &transfer.envelope_sig,
-        ) {
+        let msg = envelope_message(transfer);
+        if !self.infra_pks.iter().any(|pk| verify5(pk, &msg, &transfer.envelope_sig)) {
             return Err("envelope signature");
         }
         outputs.push(output);
@@ -636,6 +650,38 @@ pub fn mine_block(
         coinbase_sig,
     })
 }
+
+/// Note encryption. Keystream from Blake2b so the ciphertext can travel
+/// with the proof. The recipient derives the same key from a shared secret.
+pub fn encrypt_note(key: &[u8], plaintext: &[u8]) -> Vec<u8> {
+    let mut out = plaintext.to_vec();
+    let mut counter = 0u64;
+    let mut offset = 0;
+    while offset < out.len() {
+        let block = blake32(&[&key, &counter.to_le_bytes()]);
+        for b in block {
+            if offset >= out.len() {
+                break;
+            }
+            out[offset] ^= b;
+            offset += 1;
+        }
+        counter += 1;
+    }
+    out
+}
+
+pub fn decrypt_note(key: &[u8], ciphertext: &[u8]) -> Vec<u8> {
+    encrypt_note(key, ciphertext)
+}
+
+/// Derive a field spend seed from a Dilithium public key.
+/// New wallets should use this so the 64-bit field element is not the only secret.
+pub fn field_seed_from_pk(pk: &[u8]) -> u64 {
+    let h = blake32(&[pk]);
+    u64::from_le_bytes(h[..8].try_into().unwrap())
+}
+
 
 #[cfg(test)]
 mod tests {
