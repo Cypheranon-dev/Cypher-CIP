@@ -1,6 +1,6 @@
 # Status
 
-Updated November 2026. CIP-2026 targets and security fixes are in `docs/CIP-2026.md`.
+Updated November 2026. Current build: CIP-2026.1. CIP-2026 targets and security fixes are in `docs/CIP-2026.md`.
 
 | Item | State |
 | --- | --- |
