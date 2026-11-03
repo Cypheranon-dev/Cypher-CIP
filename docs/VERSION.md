@@ -1,27 +1,31 @@
 # Version
 
-**Current build: CIP-2026.6** (November 2026)
+**Final research build: CIP-2026.7** (November 2026)
 
-## Recursive aggregation
+This closes the research plan for the current tree.
 
-`crypto/cip/src/aggregate.rs` is the aggregation layer.
+## What this build finishes
 
-- `aggregate` verifies each spend proof, then folds the public digests into one Poseidon2 commitment (`DOM_AGG = 16`).
-- `commit_publics` recomputes the commitment from verified publics.
-- Empty sets and failed proofs are rejected.
-- A block can carry one aggregate commitment instead of N separate checks at verify time.
-- Full Winterfell verifier-in-a-circuit recursion remains the later AIR. This is the working aggregation the node uses now.
+| Plan item | State |
+| --- | --- |
+| FRI STARK spend, no trusted setup | Done. Degrees match Winterfell 0.13. |
+| Dilithium5 M-of-N envelope | Done. Default M = 1. |
+| Dilithium2 user signature | Done. 1312-byte key required. |
+| Poseidon2 notes, nullifiers, events | Done. |
+| Dilithium key binding (circuit v2) | Done. Spend commits to the key. |
+| In-circuit Dilithium binding check | Done. `dilithium_bind::check_spend_key`. Full ML-DSA-in-STARK is a later AIR. |
+| Recursive aggregation | Done. `aggregate` folds verified spends into one commitment. Full verifier-in-circuit is a later AIR. |
+| Note encryption | Done. |
+| Coinbase key not on chain | Done. |
+| Timestamp bounds | Done. Caller-supplied, 1-day jump cap. |
+| Finite emission | Done. Integer form of §12.2. |
+| Equihash(48, 5) | Done. Paper (512, 9) does not construct. |
 
-## Chain plan (unchanged)
+## Explicitly later (not this tree)
 
-- FRI STARK transfer, no trusted setup
-- Dilithium5 M-of-N envelope, Dilithium2 user signature
-- Poseidon2
-- Finite emission
-- Equihash(48, 5) as the legal instance
+- Full Winterfell verifier circuit (recursive AIR)
+- Full ML-DSA verification inside the STARK
+- Public P2P testnet with authenticated gossip
+- Third-party audit and bounty
 
-## Previous
-
-- CIP-2026.5: M-of-N Dilithium5 envelope
-- CIP-2026.4: degree fix, full Dilithium2 key, 1-day timestamp cap
-- CIP-2026.3: circuit v2 key binding
+The current tree is the full CIP chain for this research stage. `sim/` is not consensus.
