@@ -158,6 +158,14 @@ impl<'a> Input<'a> {
             user_pk: self.bytes()?,
             user_sig: self.bytes()?,
             envelope_sig: self.bytes()?,
+            extra_envelope_sigs: {
+                let n = self.u32()? as usize;
+                let mut extras = Vec::with_capacity(n);
+                for _ in 0..n {
+                    extras.push(self.bytes()?);
+                }
+                extras
+            },
         })
     }
 }
@@ -186,6 +194,10 @@ fn write_block(out: &mut Vec<u8>, block: &Block) {
         write_bytes(out, &transfer.user_pk);
         write_bytes(out, &transfer.user_sig);
         write_bytes(out, &transfer.envelope_sig);
+        out.extend_from_slice(&(transfer.extra_envelope_sigs.len() as u32).to_le_bytes());
+        for sig in &transfer.extra_envelope_sigs {
+            write_bytes(out, sig);
+        }
     }
     match &block.coinbase {
         Some(coinbase) => {
