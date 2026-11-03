@@ -39,6 +39,8 @@ pub struct Transfer {
     pub user_pk: Vec<u8>,
     pub user_sig: Vec<u8>,
     pub envelope_sig: Vec<u8>,
+    /// Additional envelope signatures for M-of-N. Empty when threshold is 1.
+    pub extra_envelope_sigs: Vec<Vec<u8>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -74,6 +76,7 @@ struct Ledger {
 pub struct Chain {
     /// One or more infrastructure keys. Envelope verifies against any (1-of-N).
     infra_pks: Vec<Vec<u8>>,
+    threshold: usize,
     genesis_leaves: [[u64; 4]; LEAVES],
     initial_bits: u32,
     blocks: Vec<Block>,
@@ -312,6 +315,7 @@ impl Chain {
         let _ = root_words(&leaves)?;
         Ok(Self {
             infra_pks,
+            threshold: 1,
             genesis_leaves: leaves,
             initial_bits: difficulty_bits,
             blocks: Vec::new(),
@@ -431,6 +435,19 @@ impl Chain {
         &self.infra_pks
     }
 
+    pub fn threshold(&self) -> usize {
+        self.threshold
+    }
+
+    /// Require M valid Dilithium5 envelope signatures from the N infrastructure keys.
+    pub fn set_threshold(&mut self, m: usize) -> Result<(), &'static str> {
+        if m == 0 || m > self.infra_pks.len() {
+            return Err("threshold");
+        }
+        self.threshold = m;
+        Ok(())
+    }
+
     pub fn genesis_leaves(&self) -> [[u64; 4]; LEAVES] {
         self.genesis_leaves
     }
@@ -508,7 +525,17 @@ impl Chain {
         // v2 binding: the Dilithium key must open to a Poseidon2 commitment.
         cypher_cip::v2::pk_commitment(&transfer.user_pk).map_err(|_| "user key")?;
         let msg = envelope_message(transfer);
-        if !self.infra_pks.iter().any(|pk| verify5(pk, &msg, &transfer.envelope_sig)) {
+        let mut sigs = vec![transfer.envelope_sig.as_slice()];
+        for extra in &transfer.extra_envelope_sigs {
+            sigs.push(extra.as_slice());
+        }
+        let mut matched = 0usize;
+        for pk in &self.infra_pks {
+            if sigs.iter().any(|sig| verify5(pk, &msg, sig)) {
+                matched += 1;
+            }
+        }
+        if matched < self.threshold {
             return Err("envelope signature");
         }
         outputs.push(output);
@@ -726,6 +753,7 @@ mod tests {
             user_pk: user.public.clone(),
             user_sig: Vec::new(),
             envelope_sig: Vec::new(),
+            extra_envelope_sigs: Vec::new(),
         };
         transfer.user_sig = sign2(&user.secret, &user_message(&transfer));
         transfer.envelope_sig = sign5(&infra.secret, &envelope_message(&transfer));
@@ -967,6 +995,17 @@ mod tests {
         assert_eq!(loaded.chain.tip(), node.chain.tip());
         assert_eq!(loaded.chain.note_trees(), 2);
         assert_eq!(loaded.chain.height(), 9);
+    }
+
+
+    #[test]
+    fn threshold_rejects_bad_m() {
+        let infra = Keypair::dilithium5();
+        let mut chain = Chain::open(infra.public, [[0; 4]; LEAVES], 0).unwrap();
+        assert_eq!(chain.threshold(), 1);
+        assert!(chain.set_threshold(0).is_err());
+        assert!(chain.set_threshold(2).is_err());
+        chain.set_threshold(1).unwrap();
     }
 
     #[test]
