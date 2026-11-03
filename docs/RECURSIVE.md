@@ -1,16 +1,13 @@
 # Recursive STARKs
 
-Not implemented in the current AIR.
+## Now
 
-## Path
+`crypto/cip/src/aggregate.rs` verifies each spend proof and folds the verified public digests into one Poseidon2 commitment (`DOM_AGG = 16`).
 
-1. Prove each spend as today (Winterfell FRI).
-2. Aggregate N spend proofs into one recursive proof that attests "these N proofs verified."
-3. The block carries one recursive proof instead of N individual proofs.
-4. The node verifies the recursive proof once.
+- `aggregate(&[SpendRef])` rejects an empty set and any proof that fails `verify_bytes`.
+- `commit_publics` recomputes the commitment.
+- A block can carry the aggregate commitment. The node checks it once.
 
-Winterfell supports recursion via a verifier circuit. That circuit is not in this tree. The interface is the existing `verify_bytes` call; a recursive wrapper would call it inside a proof.
+## Later
 
-## Why it matters
-
-Depth-3 note trees and per-transfer proofs do not scale. Recursion is the path to larger anonymity sets and cheaper block verification.
+A Winterfell verifier circuit that proves "these N proofs verified" inside one STARK. That AIR is not in this tree. The aggregation layer is the interface it will replace.
