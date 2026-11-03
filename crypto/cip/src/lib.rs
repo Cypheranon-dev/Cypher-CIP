@@ -23,6 +23,7 @@
 pub mod poseidon2;
 pub mod v2;
 pub mod aggregate;
+pub mod dilithium_bind;
 
 use poseidon2::{
     full_round, linear_layer, partial_round, step_flags, DOM_EVENT, DOM_NOTE, DOM_NULL, PAD_SLOT,
