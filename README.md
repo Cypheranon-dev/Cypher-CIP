@@ -2,7 +2,7 @@
 
 **Protocol foundation for Cypher — private by default, post-quantum ready.**
 
-**Version: CIP-2026.4** — see [docs/VERSION.md](docs/VERSION.md).
+**Version: CIP-2026.5** — see [docs/VERSION.md](docs/VERSION.md).
 
 Research and implementation of the Cypher Improvement Proposal (CIP): a FRI STARK transfer system, Dilithium signatures, and an in-process chain. Designed to solve the memory and performance limits of current shielded protocols, starting with Equihash(48, 5) and moving toward scalable zk-STARK privacy without a trusted setup.
 
