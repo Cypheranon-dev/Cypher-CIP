@@ -484,8 +484,10 @@ fn constraint_degrees() -> Vec<TransitionConstraintDegree> {
     for _ in 0..N_CONST {
         degrees.push(TransitionConstraintDegree::new(1));
     }
+    // Bits are 0 or 1 on a valid trace, so bit*(bit-1) is identically zero.
+    // Winterfell measures that as degree 0, which is new(1) after the divisor.
     for _ in 0..N_PATH_BOOL + N_RANGE_BOOL {
-        degrees.push(TransitionConstraintDegree::new(2));
+        degrees.push(TransitionConstraintDegree::new(1));
     }
     for _ in 0..N_RANGE_SUM + 1 {
         degrees.push(TransitionConstraintDegree::new(1));
