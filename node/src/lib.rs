@@ -136,6 +136,17 @@ fn encode_public(public: &[u64; PUBLIC_LEN]) -> Vec<u8> {
     out
 }
 
+
+/// Verify an aggregate commitment against a list of already-checked publics.
+/// The block may carry this instead of re-checking every proof.
+pub fn check_aggregate(commit: [u64; 4], publics: &[cypher_cip::PublicInputs]) -> Result<(), &'static str> {
+    let expected = cypher_cip::aggregate::commit_publics(publics)?;
+    if expected != commit {
+        return Err("aggregate");
+    }
+    Ok(())
+}
+
 pub fn envelope_message(transfer: &Transfer) -> Vec<u8> {
     let mut message = b"Cypher-CIP/envelope/v1".to_vec();
     message.extend_from_slice(&transfer.proof);
