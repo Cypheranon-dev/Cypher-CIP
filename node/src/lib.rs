@@ -494,6 +494,10 @@ impl Chain {
             return Err("duplicate note");
         }
         verify_bytes(&transfer.proof, public)?;
+        // Full chain: Dilithium2 user key is required. Not a light signature.
+        if transfer.user_pk.len() != cypher_dilithium::DILITHIUM2_PK {
+            return Err("user key");
+        }
         if !verify2(
             &transfer.user_pk,
             &user_message(transfer),
@@ -501,6 +505,8 @@ impl Chain {
         ) {
             return Err("user signature");
         }
+        // v2 binding: the Dilithium key must open to a Poseidon2 commitment.
+        cypher_cip::v2::pk_commitment(&transfer.user_pk).map_err(|_| "user key")?;
         let msg = envelope_message(transfer);
         if !self.infra_pks.iter().any(|pk| verify5(pk, &msg, &transfer.envelope_sig)) {
             return Err("envelope signature");
@@ -523,9 +529,9 @@ impl Chain {
             if block.timestamp <= previous {
                 return Err("timestamp");
             }
-            // Reject timestamps more than 2 hours ahead of the previous block.
-            // Stops a miner from inflating difficulty with a fake future clock.
-            if block.timestamp.saturating_sub(previous) > 7_200 {
+            // Caller-supplied timestamps (paper). Reject only absurd jumps
+            // that would smash the retarget. One day is the cap.
+            if block.timestamp.saturating_sub(previous) > 86_400 {
                 return Err("timestamp too far");
             }
         }
@@ -988,7 +994,7 @@ mod tests {
         assert_eq!(behind.chain.height(), 3);
         assert_eq!(behind.chain.tip(), ahead.chain.tip());
 
-        behind.mine_next(30_000).unwrap();
+        behind.mine_next(20_100).unwrap();
         let listener = listen("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let serving = behind.chain.clone();
