@@ -1,30 +1,27 @@
 # Version
 
-**Current build: CIP-2026.5** (November 2026)
+**Current build: CIP-2026.6** (November 2026)
 
-## Next step: M-of-N envelope
+## Recursive aggregation
 
-The infrastructure envelope is no longer only 1-of-N.
+`crypto/cip/src/aggregate.rs` is the aggregation layer.
 
-- `Chain::set_threshold(m)` requires M valid Dilithium5 signatures from the N listed keys.
-- A transfer carries `envelope_sig` plus `extra_envelope_sigs`.
-- Verification counts distinct keys that produce a valid signature. Fewer than M is rejected.
-- Default remains 1, so existing single-key chains still work.
-- M must be between 1 and N.
-
-This is the step toward a threshold infrastructure key before any public network. It is still Dilithium5, not a light signature.
+- `aggregate` verifies each spend proof, then folds the public digests into one Poseidon2 commitment (`DOM_AGG = 16`).
+- `commit_publics` recomputes the commitment from verified publics.
+- Empty sets and failed proofs are rejected.
+- A block can carry one aggregate commitment instead of N separate checks at verify time.
+- Full Winterfell verifier-in-a-circuit recursion remains the later AIR. This is the working aggregation the node uses now.
 
 ## Chain plan (unchanged)
 
 - FRI STARK transfer, no trusted setup
-- Dilithium5 envelope, Dilithium2 user signature
+- Dilithium5 M-of-N envelope, Dilithium2 user signature
 - Poseidon2
 - Finite emission
 - Equihash(48, 5) as the legal instance
-- Recursive STARKs and in-circuit Dilithium are the following circuit steps
 
 ## Previous
 
-- CIP-2026.4: degree fix, full Dilithium2 key required, 1-day timestamp cap
+- CIP-2026.5: M-of-N Dilithium5 envelope
+- CIP-2026.4: degree fix, full Dilithium2 key, 1-day timestamp cap
 - CIP-2026.3: circuit v2 key binding
-- CIP-2026.2: 1-of-N, note encryption, 24-bit cap
