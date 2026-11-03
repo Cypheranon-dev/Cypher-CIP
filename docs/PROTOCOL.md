@@ -1,6 +1,6 @@
 # Protocol
 
-What the Rust crates enforce. A name here is the name of the code. The paper's Equihash-512 and a public 120-second network are not this protocol.
+What the Rust crates enforce. This is the full CIP chain: FRI STARK spend, Dilithium2 user signature, Dilithium5 envelope. It is not a light simulation. The paper's Equihash-512 and a public 120-second network are not this process.
 
 ## Hash
 
@@ -44,7 +44,7 @@ Coinbase is optional. If present, its commitment must be the note for `block_rew
 
 Heavier total work wins. Equal work does not replace the chain. Work per block is `2^bits`.
 
-After 500 intervals, bits are retargeted with `D_new = D_old * (120 * 500) / sum(t_i)` and then stored as `floor(log2(D))`, clamped at 12. Timestamps are caller-supplied. This process does not produce a block every 120 seconds.
+After 500 intervals, bits are retargeted with `D_new = D_old * (120 * 500) / sum(t_i)` and then stored as `floor(log2(D))`, clamped at 24. Timestamps are caller-supplied. This process does not produce a block every 120 seconds.
 
 ## Peers
 
