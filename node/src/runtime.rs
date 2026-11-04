@@ -270,7 +270,7 @@ impl Node {
         body.extend_from_slice(&id);
         body.extend_from_slice(&(sig.len() as u32).to_le_bytes());
         body.extend_from_slice(&sig);
-        wire::write_blocks(&mut body, &[block.clone()]);
+        wire::write_blocks(&mut body, std::slice::from_ref(block));
         let mut results = Vec::new();
         for peer in &self.peers {
             match TcpStream::connect_timeout(

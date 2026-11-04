@@ -18,7 +18,7 @@ use std::collections::BTreeSet;
 use blake2b_simd::Params;
 pub use cypher_cip::LEAVES;
 use cypher_cip::{
-    digest_words, event_digest, note_commitment, root_words, verify_bytes, PublicInputs, PUBLIC_LEN,
+    digest_words, event_digest, root_words, verify_bytes, PublicInputs, PUBLIC_LEN,
 };
 use cypher_dilithium::{verify2, verify5};
 use cypher_equihash::{commit, leading_zero_bits, verify, Instance, SOLVED_K, SOLVED_N};
