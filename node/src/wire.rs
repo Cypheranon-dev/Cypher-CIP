@@ -3,6 +3,9 @@
 use crate::{Block, Chain, Coinbase, Transfer, LEAVES, PUBLIC_LEN};
 
 const MAGIC: &[u8] = b"CYPH1";
+const MAX_BLOCKS: u64 = 10_000;
+const MAX_TRANSFERS: u32 = 1_000;
+const MAX_BYTES: u32 = 1_048_576;
 
 pub fn save_chain(chain: &Chain, blocks: &[Block]) -> Vec<u8> {
     let mut out = Vec::new();
@@ -14,6 +17,8 @@ pub fn save_chain(chain: &Chain, blocks: &[Block]) -> Vec<u8> {
         }
     }
     out.extend_from_slice(&chain.initial_bits().to_le_bytes());
+    out.extend_from_slice(&(chain.threshold() as u32).to_le_bytes());
+    out.push(if chain.production() { 1 } else { 0 });
     write_blocks(&mut out, blocks);
     out
 }
@@ -31,11 +36,20 @@ pub fn load_chain(bytes: &[u8]) -> Result<(Chain, Vec<Block>), &'static str> {
         }
     }
     let bits = input.u32()?;
+    let threshold = input.u32()? as usize;
+    let production = input.take(1)?[0] == 1;
     let blocks = input.blocks()?;
     if input.rest() != 0 {
         return Err("trailing chain bytes");
     }
-    Ok((Chain::open(infra_pk, leaves, bits)?, blocks))
+    let mut chain = Chain::open(infra_pk, leaves, bits)?;
+    if threshold > 1 {
+        chain.set_threshold(threshold).map_err(|_| "threshold")?;
+    }
+    if production {
+        chain.enable_production().map_err(|_| "production")?;
+    }
+    Ok((chain, blocks))
 }
 
 pub fn write_blocks(out: &mut Vec<u8>, blocks: &[Block]) {
@@ -94,12 +108,19 @@ impl<'a> Input<'a> {
     }
 
     pub fn bytes(&mut self) -> Result<Vec<u8>, &'static str> {
-        let len = self.u32()? as usize;
-        Ok(self.take(len)?.to_vec())
+        let len = self.u32()?;
+        if len > MAX_BYTES {
+            return Err("oversize");
+        }
+        Ok(self.take(len as usize)?.to_vec())
     }
 
     pub fn blocks(&mut self) -> Result<Vec<Block>, &'static str> {
-        let count = self.u64()? as usize;
+        let count = self.u64()?;
+        if count > MAX_BLOCKS {
+            return Err("too many blocks");
+        }
+        let count = count as usize;
         let mut blocks = Vec::with_capacity(count);
         for _ in 0..count {
             blocks.push(self.block()?);
@@ -119,7 +140,11 @@ impl<'a> Input<'a> {
             indices.push(self.u32()?);
         }
         let difficulty_bits = self.u32()?;
-        let tx_count = self.u32()? as usize;
+        let tx_count = self.u32()?;
+        if tx_count > MAX_TRANSFERS {
+            return Err("too many transfers");
+        }
+        let tx_count = tx_count as usize;
         let mut transfers = Vec::with_capacity(tx_count);
         for _ in 0..tx_count {
             transfers.push(self.transfer()?);
