@@ -77,6 +77,7 @@ pub struct Chain {
     /// One or more infrastructure keys. Envelope verifies against any (1-of-N).
     infra_pks: Vec<Vec<u8>>,
     threshold: usize,
+    production: bool,
     genesis_leaves: [[u64; 4]; LEAVES],
     initial_bits: u32,
     blocks: Vec<Block>,
@@ -327,6 +328,7 @@ impl Chain {
         Ok(Self {
             infra_pks,
             threshold: 1,
+            production: false,
             genesis_leaves: leaves,
             initial_bits: difficulty_bits,
             blocks: Vec::new(),
@@ -459,6 +461,22 @@ impl Chain {
         Ok(())
     }
 
+    /// Production demo mode. Requires at least 2-of-N and a difficulty floor.
+    pub fn enable_production(&mut self) -> Result<(), &'static str> {
+        if self.infra_pks.len() < 2 {
+            return Err("production needs 2 infra keys");
+        }
+        if self.threshold < 2 {
+            self.threshold = 2;
+        }
+        self.production = true;
+        Ok(())
+    }
+
+    pub fn production(&self) -> bool {
+        self.production
+    }
+
     pub fn genesis_leaves(&self) -> [[u64; 4]; LEAVES] {
         self.genesis_leaves
     }
@@ -533,6 +551,12 @@ impl Chain {
         ) {
             return Err("user signature");
         }
+        // Hole 1+3: spend key must open a Poseidon2 commitment, and the
+        // Dilithium signature must verify against that same key.
+        let commit = cypher_cip::mldsa::prove_key_binding(&transfer.user_pk)
+            .map_err(|_| "user key")?;
+        cypher_cip::mldsa::verify_key_binding(&transfer.user_pk, commit)
+            .map_err(|_| "user key")?;
         // v2 binding: the Dilithium key must open to a Poseidon2 commitment.
         cypher_cip::v2::pk_commitment(&transfer.user_pk).map_err(|_| "user key")?;
         let msg = envelope_message(transfer);
@@ -563,14 +587,29 @@ impl Chain {
         if block.difficulty_bits != ledger.bits || block.difficulty_bits > MAX_BITS {
             return Err("difficulty");
         }
+        if self.production && block.difficulty_bits < 8 {
+            return Err("difficulty floor");
+        }
         if let Some(previous) = ledger.prev_time {
             if block.timestamp <= previous {
                 return Err("timestamp");
             }
-            // Caller-supplied timestamps (paper). Reject only absurd jumps
-            // that would smash the retarget. One day is the cap.
+            // Caller-supplied. Reject absurd jumps and, in production mode,
+            // jumps larger than 4x the recent median interval.
             if block.timestamp.saturating_sub(previous) > 86_400 {
                 return Err("timestamp too far");
+            }
+            if self.production {
+                let recent: Vec<u64> = ledger.timestamps.iter().rev().take(11).cloned().collect();
+                if recent.len() >= 3 {
+                    let mut gaps: Vec<u64> = recent.windows(2).map(|w| w[0].saturating_sub(w[1])).collect();
+                    gaps.sort_unstable();
+                    let median = gaps[gaps.len() / 2].max(1);
+                    let jump = block.timestamp.saturating_sub(previous);
+                    if jump > median.saturating_mul(4) && jump > 120 {
+                        return Err("timestamp median");
+                    }
+                }
             }
         }
         let prefix = pow_prefix(
