@@ -1,15 +1,19 @@
 # Status
 
-**CIP-2026.10** (November 2026). Hardened demo. Not mainnet.
+Reviewed `main` at `7ca407c`. Branch `cip-2026-review-fixes`.
 
 | Item | State |
 | --- | --- |
-| Coinbase | Publicly determined. Wire cannot mint an arbitrary note. |
-| Spend key binding | Payload must match Dilithium key commitment lane. |
-| Note encryption | Authenticated. Tag required. |
+| Coinbase | Publicly determined. No skip when secret is absent. |
+| Spend key binding | Payload (STARK-constrained) must match Dilithium key-commitment lane. Not in-circuit ML-DSA. |
+| Note encryption | Authenticated custom stream. Fresh nonce. Not a vetted AEAD. |
 | Chain selection | Heavier work via `consider`. |
-| Wire limits | Enforced. |
+| Wire limits | 10k blocks, 1k transfers, 1 MiB blobs. |
+| Block id | Commits to proof, public inputs, and both signatures. |
 | Production config | Persisted. |
-| Recursive AIR | Does not yet constrain the fold. Not a consensus claim. |
-| Broadcast | Signs announcements. Does not send them. |
+| Recursive AIR | Relabeled. Not a verifier circuit. |
+| Broadcast | TCP push of a signed block id. Not a gossip network. |
+| Anonymity set | 8 leaves. |
 | Audit | None. |
+
+Not for real funds.

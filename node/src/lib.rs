@@ -137,10 +137,12 @@ fn encode_public(public: &[u64; PUBLIC_LEN]) -> Vec<u8> {
     out
 }
 
-
 /// Verify an aggregate commitment against a list of already-checked publics.
 /// The block may carry this instead of re-checking every proof.
-pub fn check_aggregate(commit: [u64; 4], publics: &[cypher_cip::PublicInputs]) -> Result<(), &'static str> {
+pub fn check_aggregate(
+    commit: [u64; 4],
+    publics: &[cypher_cip::PublicInputs],
+) -> Result<(), &'static str> {
     let expected = cypher_cip::aggregate::commit_publics(publics)?;
     if expected != commit {
         return Err("aggregate");
@@ -188,7 +190,15 @@ pub fn pow_prefix(
     prefix.extend_from_slice(&timestamp.to_le_bytes());
     prefix.extend_from_slice(&difficulty_bits.to_le_bytes());
     for transfer in transfers {
-        let tx = blake32(&[&transfer.proof, &encode_public(&transfer.public)]);
+        // Commit to every consensus-relevant transfer field, including
+        // signatures. A different signature must change the block id.
+        let tx = blake32(&[
+            &transfer.proof,
+            &encode_public(&transfer.public),
+            &transfer.user_pk,
+            &transfer.user_sig,
+            &transfer.envelope_sig,
+        ]);
         prefix.extend_from_slice(&tx);
     }
     prefix.extend_from_slice(&coinbase_bytes(coinbase));
@@ -554,8 +564,8 @@ impl Chain {
         // Bind the Dilithium key into the STARK statement via payload.
         // The proof already constrains payload. It must equal the first
         // lane of the key commitment, so the witness is tied to this key.
-        let commit = cypher_cip::mldsa::prove_key_binding(&transfer.user_pk)
-            .map_err(|_| "user key")?;
+        let commit =
+            cypher_cip::mldsa::prove_key_binding(&transfer.user_pk).map_err(|_| "user key")?;
         if public.payload.as_int() != commit[0] {
             return Err("key not bound");
         }
@@ -604,7 +614,10 @@ impl Chain {
             if self.production {
                 let recent: Vec<u64> = ledger.timestamps.iter().rev().take(11).cloned().collect();
                 if recent.len() >= 3 {
-                    let mut gaps: Vec<u64> = recent.windows(2).map(|w| w[0].saturating_sub(w[1])).collect();
+                    let mut gaps: Vec<u64> = recent
+                        .windows(2)
+                        .map(|w| w[0].saturating_sub(w[1]))
+                        .collect();
                     gaps.sort_unstable();
                     let median = gaps[gaps.len() / 2].max(1);
                     let jump = block.timestamp.saturating_sub(previous);
@@ -743,12 +756,21 @@ pub fn mine_block(
 /// is the caller's bug; the tag rejects tampering.
 pub fn encrypt_note(key: &[u8], plaintext: &[u8]) -> Vec<u8> {
     let mut nonce = [0u8; 16];
-    for (i, b) in blake32(&[key, plaintext, &plaintext.len().to_le_bytes()]).iter().take(16).enumerate() {
-        nonce[i] = *b;
+    // Fresh nonce per ciphertext. Identical plaintexts under the same key
+    // produce different ciphertexts. Still a custom construction; replace
+    // with a vetted AEAD (XChaCha20-Poly1305) before any production use.
+    if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
+        use std::io::Read;
+        let _ = f.read_exact(&mut nonce);
+    } else {
+        for (i, b) in blake32(&[key, plaintext, &plaintext.len().to_le_bytes()])
+            .iter()
+            .take(16)
+            .enumerate()
+        {
+            nonce[i] = *b;
+        }
     }
-    // Mix a counter so identical plaintexts under the same key differ if the
-    // caller passes a unique suffix. Here the nonce is derived; callers who
-    // need randomness should prepend their own.
     let mut body = plaintext.to_vec();
     let mut counter = 0u64;
     let mut offset = 0;
@@ -804,7 +826,6 @@ pub fn field_seed_from_pk(pk: &[u8]) -> u64 {
     let h = blake32(&[pk]);
     u64::from_le_bytes(h[..8].try_into().unwrap())
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -906,7 +927,11 @@ mod tests {
         let infra = Keypair::dilithium5();
         let user = Keypair::dilithium2();
         let miner = Keypair::dilithium2();
-        let witness = funded(chain_words(&[0u8; 32]), 77);
+        let mut witness = funded(chain_words(&[0u8; 32]), 77);
+        // Payload is constrained by the STARK. Bind it to the user key
+        // so the spend is accepted only for this Dilithium key.
+        let commit = cypher_cip::mldsa::prove_key_binding(&user.public).unwrap();
+        witness.payload = commit[0];
         let (transfer, leaves) = signed_transfer(&infra, &user, &witness);
         let mut chain = Chain::open(infra.public.clone(), leaves, 4).unwrap();
 
@@ -995,7 +1020,8 @@ mod tests {
         assert_eq!(chain.append(bad_mint).err(), Some("coinbase"));
 
         let reward = block_reward(2);
-        let minted = digest_words(note_commitment(reward, 5, 2).unwrap());
+        let seed = field_seed_from_pk(&miner.public);
+        let minted = digest_words(note_commitment(reward, seed, 2).unwrap());
         let good_mint = mine_block(
             chain.tip(),
             2,
@@ -1003,7 +1029,7 @@ mod tests {
             4,
             Vec::new(),
             Some(Coinbase {
-                sk: 5,
+                sk: seed,
                 commitment: minted,
             }),
             &miner.public,
@@ -1086,7 +1112,6 @@ mod tests {
         assert_eq!(loaded.chain.note_trees(), 2);
         assert_eq!(loaded.chain.height(), 9);
     }
-
 
     #[test]
     fn threshold_rejects_bad_m() {

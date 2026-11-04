@@ -20,6 +20,7 @@ pub struct Node {
     pub chain: Chain,
     miner_pk: Vec<u8>,
     miner_sk: Vec<u8>,
+    #[allow(dead_code)] // reserved for wallet spend seed; coinbase uses miner pk
     field_sk: u64,
     mempool: Vec<Transfer>,
     peers: Vec<String>,
@@ -234,20 +235,35 @@ impl Node {
     }
 }
 
-
 impl Node {
     /// Authenticated broadcast. Signs the block id with the miner key and
     /// sends to every peer. Receivers must verify the Dilithium2 signature.
-    pub fn broadcast(&self, block: &crate::Block) -> Vec<(&'static str, String)> {
+    /// Push the block to each configured peer over the existing TCP
+    /// protocol. Signs the block id. This is authenticated point-to-point
+    /// push, not a public gossip network and not Sybil-resistant.
+    pub fn broadcast(&self, block: &crate::Block) -> Vec<(String, String)> {
         use cypher_dilithium::sign2;
+        use std::net::TcpStream;
         let id = crate::block_id(block);
         let sig = sign2(&self.miner_sk, &id);
+        let mut body = Vec::new();
+        body.extend_from_slice(&id);
+        body.extend_from_slice(&(sig.len() as u32).to_le_bytes());
+        body.extend_from_slice(&sig);
         let mut results = Vec::new();
         for peer in &self.peers {
-            // Demo: record the signed announcement. A live socket send is
-            // the next hop; the signature is what stops a fake peer.
-            let _ = (&id, &sig, peer);
-            results.push(("announced", peer.clone()));
+            match TcpStream::connect_timeout(
+                &peer
+                    .parse()
+                    .unwrap_or_else(|_| "127.0.0.1:1".parse().unwrap()),
+                std::time::Duration::from_secs(2),
+            ) {
+                Ok(mut stream) => match send(&mut stream, 0x05, &body) {
+                    Ok(()) => results.push((peer.clone(), "sent".into())),
+                    Err(err) => results.push((peer.clone(), err)),
+                },
+                Err(err) => results.push((peer.clone(), err.to_string())),
+            }
         }
         results
     }

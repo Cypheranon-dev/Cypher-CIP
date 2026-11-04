@@ -1,7 +1,9 @@
-//! Winterfell verifier-in-circuit AIR for recursive aggregation.
+//! Aggregate fold helper. NOT a Winterfell verifier circuit.
 //!
-//! Proves that a sequence of spend digests was folded with Poseidon2 under
-//! DOM_AGG into the public commitment. The node verifies one proof.
+//! The transition constraints copy columns. They do not constrain a
+//! Poseidon2 fold and do not verify underlying STARK proofs. Sound
+//! aggregation is `aggregate()`, which calls `verify_bytes` natively
+//! and then folds. Do not present this AIR as recursive verification.
 
 use winterfell::math::fields::f64::BaseElement;
 use winterfell::math::{FieldElement, ToElements};
@@ -58,9 +60,10 @@ pub fn fill_recursive_trace(digests: &[[BaseElement; 4]]) -> Vec<[BaseElement; W
         rows[row][4..8].copy_from_slice(dig);
         rows[row][8] = BaseElement::new((i + 1) as u64);
     }
-    for row in digests.len()..TRACE_LEN {
-        rows[row][0..4].copy_from_slice(&acc);
-        rows[row][8] = BaseElement::new(digests.len() as u64);
+    let count = BaseElement::new(digests.len() as u64);
+    for row in rows.iter_mut().take(TRACE_LEN).skip(digests.len()) {
+        row[0..4].copy_from_slice(&acc);
+        row[8] = count;
     }
     rows
 }
@@ -106,7 +109,11 @@ impl Air for RecursiveAir {
     fn get_assertions(&self) -> Vec<Assertion<BaseElement>> {
         let mut a = Vec::with_capacity(N_ASSERTIONS);
         for lane in 0..4 {
-            a.push(Assertion::single(lane, TRACE_LEN - 1, self.public.commit[lane]));
+            a.push(Assertion::single(
+                lane,
+                TRACE_LEN - 1,
+                self.public.commit[lane],
+            ));
         }
         a.push(Assertion::single(8, TRACE_LEN - 1, self.public.count));
         a
