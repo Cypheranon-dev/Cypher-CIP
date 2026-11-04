@@ -6,11 +6,17 @@ const MAGIC: &[u8] = b"CYPH1";
 const MAX_BLOCKS: u64 = 10_000;
 const MAX_TRANSFERS: u32 = 1_000;
 const MAX_BYTES: u32 = 1_048_576;
+const MAX_INDICES: u32 = 10_000;
+const MAX_EXTRA_SIGS: u32 = 64;
 
 pub fn save_chain(chain: &Chain, blocks: &[Block]) -> Vec<u8> {
     let mut out = Vec::new();
     out.extend_from_slice(MAGIC);
-    write_bytes(&mut out, chain.infra_pk());
+    let keys = chain.infra_pks();
+    out.extend_from_slice(&(keys.len() as u32).to_le_bytes());
+    for key in keys {
+        write_bytes(&mut out, key);
+    }
     for leaf in chain.genesis_leaves() {
         for word in leaf {
             out.extend_from_slice(&word.to_le_bytes());
@@ -28,7 +34,14 @@ pub fn load_chain(bytes: &[u8]) -> Result<(Chain, Vec<Block>), &'static str> {
     if input.take(MAGIC.len())? != MAGIC {
         return Err("not a chain file");
     }
-    let infra_pk = input.bytes()?;
+    let nkeys = input.u32()? as usize;
+    if nkeys == 0 || nkeys > 64 {
+        return Err("infra keys");
+    }
+    let mut infra_pks = Vec::with_capacity(nkeys);
+    for _ in 0..nkeys {
+        infra_pks.push(input.bytes()?);
+    }
     let mut leaves = [[0u64; 4]; LEAVES];
     for leaf in &mut leaves {
         for word in leaf.iter_mut() {
@@ -42,7 +55,7 @@ pub fn load_chain(bytes: &[u8]) -> Result<(Chain, Vec<Block>), &'static str> {
     if input.rest() != 0 {
         return Err("trailing chain bytes");
     }
-    let mut chain = Chain::open(infra_pk, leaves, bits)?;
+    let mut chain = Chain::open_threshold(infra_pks, leaves, bits)?;
     if threshold > 1 {
         chain.set_threshold(threshold).map_err(|_| "threshold")?;
     }
@@ -134,7 +147,11 @@ impl<'a> Input<'a> {
         prev.copy_from_slice(self.take(32)?);
         let timestamp = self.u64()?;
         let nonce = self.u32()?;
-        let index_count = self.u32()? as usize;
+        let index_count = self.u32()?;
+        if index_count > MAX_INDICES {
+            return Err("too many indices");
+        }
+        let index_count = index_count as usize;
         let mut indices = Vec::with_capacity(index_count);
         for _ in 0..index_count {
             indices.push(self.u32()?);
@@ -151,8 +168,16 @@ impl<'a> Input<'a> {
         }
         let coinbase = if self.take(1)?[0] == 1 {
             Some(Coinbase {
-                sk: 0, // not on the wire; local validation only
+                sk: 0,
                 commitment: [self.u64()?, self.u64()?, self.u64()?, self.u64()?],
+                proof: self.bytes()?,
+                public: {
+                    let mut p = [0u64; crate::PUBLIC_LEN];
+                    for word in &mut p {
+                        *word = self.u64()?;
+                    }
+                    p
+                },
             })
         } else {
             None
@@ -184,7 +209,11 @@ impl<'a> Input<'a> {
             user_sig: self.bytes()?,
             envelope_sig: self.bytes()?,
             extra_envelope_sigs: {
-                let n = self.u32()? as usize;
+                let n = self.u32()?;
+                if n > MAX_EXTRA_SIGS {
+                    return Err("too many signatures");
+                }
+                let n = n as usize;
                 let mut extras = Vec::with_capacity(n);
                 for _ in 0..n {
                     extras.push(self.bytes()?);
@@ -227,8 +256,11 @@ fn write_block(out: &mut Vec<u8>, block: &Block) {
     match &block.coinbase {
         Some(coinbase) => {
             out.push(1);
-            // sk is not serialized. Commitment only.
             for word in coinbase.commitment {
+                out.extend_from_slice(&word.to_le_bytes());
+            }
+            write_bytes(out, &coinbase.proof);
+            for word in coinbase.public {
                 out.extend_from_slice(&word.to_le_bytes());
             }
         }
