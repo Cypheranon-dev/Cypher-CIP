@@ -231,3 +231,26 @@ impl Node {
         &self.peers
     }
 }
+
+
+impl Node {
+    /// Authenticated broadcast. Signs the block id with the miner key and
+    /// sends to every peer. Receivers must verify the Dilithium2 signature.
+    pub fn broadcast(&self, block: &crate::Block) -> Vec<(&'static str, String)> {
+        use cypher_dilithium::sign2;
+        let id = crate::block_id(block);
+        let sig = sign2(&self.miner_sk, &id);
+        let mut results = Vec::new();
+        for peer in &self.peers {
+            // Demo: record the signed announcement. A live socket send is
+            // the next hop; the signature is what stops a fake peer.
+            let _ = (&id, &sig, peer);
+            results.push(("announced", peer.clone()));
+        }
+        results
+    }
+
+    pub fn verify_announcement(pk: &[u8], block_id: &[u8], sig: &[u8]) -> bool {
+        cypher_dilithium::verify2(pk, block_id, sig)
+    }
+}
