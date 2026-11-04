@@ -60,9 +60,10 @@ pub fn fill_recursive_trace(digests: &[[BaseElement; 4]]) -> Vec<[BaseElement; W
         rows[row][4..8].copy_from_slice(dig);
         rows[row][8] = BaseElement::new((i + 1) as u64);
     }
-    for row in digests.len()..TRACE_LEN {
-        rows[row][0..4].copy_from_slice(&acc);
-        rows[row][8] = BaseElement::new(digests.len() as u64);
+    let count = BaseElement::new(digests.len() as u64);
+    for row in rows.iter_mut().take(TRACE_LEN).skip(digests.len()) {
+        row[0..4].copy_from_slice(&acc);
+        row[8] = count;
     }
     rows
 }

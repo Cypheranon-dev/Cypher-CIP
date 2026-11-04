@@ -20,6 +20,7 @@ pub struct Node {
     pub chain: Chain,
     miner_pk: Vec<u8>,
     miner_sk: Vec<u8>,
+    #[allow(dead_code)] // reserved for wallet spend seed; coinbase uses miner pk
     field_sk: u64,
     mempool: Vec<Transfer>,
     peers: Vec<String>,
