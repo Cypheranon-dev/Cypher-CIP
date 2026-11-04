@@ -71,9 +71,10 @@ impl Node {
             .filter(|tx| self.chain.check_transfer(tx).is_ok())
             .cloned()
             .collect();
+        let seed = crate::field_seed_from_pk(&self.miner_pk);
         let commitment = digest_words(note_commitment(
             block_reward(self.chain.height() + 1),
-            self.field_sk,
+            seed,
             self.chain.height() + 1,
         )?);
         let block = mine_block(
@@ -83,7 +84,7 @@ impl Node {
             self.chain.difficulty_bits(),
             transfers,
             Some(Coinbase {
-                sk: self.field_sk,
+                sk: seed,
                 commitment,
             }),
             &self.miner_pk,
@@ -149,9 +150,10 @@ pub fn exchange(stream: &mut TcpStream, chain: &mut Chain) -> Result<(), String>
         let blocks = Input::new(&payload)
             .blocks()
             .map_err(|err| err.to_string())?;
-        for block in blocks {
-            chain.append(block).map_err(|err| err.to_string())?;
-        }
+        // Heavier chain wins. Do not append a longer-but-weaker fork.
+        let mut candidate = chain.blocks().to_vec();
+        candidate.extend(blocks);
+        chain.consider(candidate).map_err(|err| err.to_string())?;
     }
     Ok(())
 }
