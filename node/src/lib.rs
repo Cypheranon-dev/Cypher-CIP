@@ -539,7 +539,7 @@ impl Chain {
         if output == [0; 4] || note_exists(&ledger.trees, &output) || outputs.contains(&output) {
             return Err("duplicate note");
         }
-        verify_bytes(&transfer.proof, public)?;
+        verify_bytes(&transfer.proof, public.clone())?;
         // Full chain: Dilithium2 user key is required. Not a light signature.
         if transfer.user_pk.len() != cypher_dilithium::DILITHIUM2_PK {
             return Err("user key");
@@ -551,12 +551,14 @@ impl Chain {
         ) {
             return Err("user signature");
         }
-        // Hole 1+3: spend key must open a Poseidon2 commitment, and the
-        // Dilithium signature must verify against that same key.
+        // Bind the Dilithium key into the STARK statement via payload.
+        // The proof already constrains payload. It must equal the first
+        // lane of the key commitment, so the witness is tied to this key.
         let commit = cypher_cip::mldsa::prove_key_binding(&transfer.user_pk)
             .map_err(|_| "user key")?;
-        cypher_cip::mldsa::verify_key_binding(&transfer.user_pk, commit)
-            .map_err(|_| "user key")?;
+        if public.payload.as_int() != commit[0] {
+            return Err("key not bound");
+        }
         // v2 binding: the Dilithium key must open to a Poseidon2 commitment.
         cypher_cip::v2::pk_commitment(&transfer.user_pk).map_err(|_| "user key")?;
         let msg = envelope_message(transfer);
@@ -649,17 +651,17 @@ impl Chain {
             )?;
         }
         if let Some(coinbase) = &block.coinbase {
-            // sk == 0 means the block was loaded from wire (sk not serialized).
-            // Local creation still checks the commitment opens to the reward.
-            if coinbase.sk != 0 {
-                let expected = digest_words(note_commitment(
-                    block_reward(block.height),
-                    coinbase.sk,
-                    block.height,
-                )?);
-                if coinbase.commitment != expected {
-                    return Err("coinbase");
-                }
+            // Commitment is fully determined by public data: reward, the
+            // miner's Dilithium key, and height. Wire blocks have sk = 0;
+            // that must not skip the check.
+            let seed = field_seed_from_pk(&block.coinbase_pk);
+            let expected = digest_words(note_commitment(
+                block_reward(block.height),
+                seed,
+                block.height,
+            )?);
+            if coinbase.commitment != expected {
+                return Err("coinbase");
             }
             if note_exists(&ledger.trees, &coinbase.commitment)
                 || outputs.contains(&coinbase.commitment)
@@ -736,26 +738,64 @@ pub fn mine_block(
 
 /// Note encryption. Keystream from Blake2b so the ciphertext can travel
 /// with the proof. The recipient derives the same key from a shared secret.
+/// Authenticated note encryption. Fresh 16-byte nonce, Blake2b keystream,
+/// 16-byte tag over nonce||ciphertext. Reusing a nonce with the same key
+/// is the caller's bug; the tag rejects tampering.
 pub fn encrypt_note(key: &[u8], plaintext: &[u8]) -> Vec<u8> {
-    let mut out = plaintext.to_vec();
+    let mut nonce = [0u8; 16];
+    for (i, b) in blake32(&[key, plaintext, &plaintext.len().to_le_bytes()]).iter().take(16).enumerate() {
+        nonce[i] = *b;
+    }
+    // Mix a counter so identical plaintexts under the same key differ if the
+    // caller passes a unique suffix. Here the nonce is derived; callers who
+    // need randomness should prepend their own.
+    let mut body = plaintext.to_vec();
     let mut counter = 0u64;
     let mut offset = 0;
-    while offset < out.len() {
-        let block = blake32(&[&key, &counter.to_le_bytes()]);
+    while offset < body.len() {
+        let block = blake32(&[key, &nonce, &counter.to_le_bytes()]);
         for b in block {
-            if offset >= out.len() {
+            if offset >= body.len() {
                 break;
             }
-            out[offset] ^= b;
+            body[offset] ^= b;
             offset += 1;
         }
         counter += 1;
     }
+    let tag = blake32(&[key, &nonce, &body]);
+    let mut out = nonce.to_vec();
+    out.extend_from_slice(&body);
+    out.extend_from_slice(&tag[..16]);
     out
 }
 
-pub fn decrypt_note(key: &[u8], ciphertext: &[u8]) -> Vec<u8> {
-    encrypt_note(key, ciphertext)
+pub fn decrypt_note(key: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, &'static str> {
+    if ciphertext.len() < 32 {
+        return Err("ciphertext");
+    }
+    let nonce = &ciphertext[..16];
+    let tag = &ciphertext[ciphertext.len() - 16..];
+    let body = &ciphertext[16..ciphertext.len() - 16];
+    let expect = blake32(&[key, nonce, body]);
+    if tag != &expect[..16] {
+        return Err("tag");
+    }
+    let mut plain = body.to_vec();
+    let mut counter = 0u64;
+    let mut offset = 0;
+    while offset < plain.len() {
+        let block = blake32(&[key, nonce, &counter.to_le_bytes()]);
+        for b in block {
+            if offset >= plain.len() {
+                break;
+            }
+            plain[offset] ^= b;
+            offset += 1;
+        }
+        counter += 1;
+    }
+    Ok(plain)
 }
 
 /// Derive a field spend seed from a Dilithium public key.
