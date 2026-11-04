@@ -1,48 +1,22 @@
-# Security Policy
+# Security
 
-Cypher is a research-stage, pre-audit project. Nothing here has been formally
-reviewed by a third party yet. Treat everything in this repository as
-experimental, and please tell us if you find a problem — cryptographic,
-economic, or otherwise.
+**CIP-2026.9 is a hardened demo. It is not hackproof. Do not put funds on it.**
 
-## Reporting a vulnerability
+## What an attacker still can do
 
-Email **Contact@Cypheranon.com** with:
+- Brute-force Equihash(48, 5) at the demo difficulty.
+- Eclipse a single-peer or small-peer deployment.
+- Correlate the depth-3 note tree.
+- Exploit any bug in the AIR that an audit would have caught.
 
-- what you found and why it matters (a broken assumption, a forgeable proof,
-  a double-spend path, an economic exploit — whatever it is)
-- the smallest reproduction you can manage (a test case, a script, a trace)
-- your assessment of severity, if you have one
+## What this build closes
 
-Please don't open a public GitHub issue for anything that could let someone
-steal funds, forge a proof, or break privacy before we've had a chance to
-look at it. Everything else — typos, broken links, documentation issues — is
-fine as a normal public issue.
+- Spend without a Dilithium key that opens the Poseidon2 commitment.
+- Envelope signed by fewer than M of N keys.
+- Coinbase field key on the wire.
+- Timestamp jumps that smash the retarget in production mode.
+- Unsigned block announcements.
 
-## What's actually in scope right now
+## Reporting
 
-This is early. The things most worth attacking:
-
-- `crypto/cip` (does the AIR accept a witness it should reject, or reject a valid one?)
-- `crypto/dilithium` and the envelope check in `node` (a signature that verifies over the wrong bytes)
-- `crypto/equihash` (a solution `verify` accepts after a swap, or a parameter check that lets `(512, 9)` through)
-- the emission math in `sim/emission.py` and the whitepaper
-- `sim/protocol_logic.py` (not consensus; a bug there is not a chain bug)
-
-The spend hash is Poseidon2. A collision, a forged spend, or a coinbase that pays the wrong amount is in scope.
-
-We don't have a bug bounty program yet. If that changes, it'll be announced
-here and at cypheranon.com.
-
-## Response time
-
-No formal SLA at this stage — we're a small, pseudonymous team. We'll
-acknowledge reports as fast as we can and credit you (by whatever name you
-choose, including staying anonymous) once a fix ships, if you want credit.
-
-
-## Fixes shipped (November 2026)
-
-- Coinbase field `sk` is no longer serialized or included in the PoW prefix.
-- Timestamps more than 2 hours ahead of the previous block are rejected.
-- Recovery (CIP-2026) is opt-in and user-authorized, not a validator power.
+Email Contact@Cypheranon.com. No bounty yet.
