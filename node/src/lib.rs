@@ -188,7 +188,15 @@ pub fn pow_prefix(
     prefix.extend_from_slice(&timestamp.to_le_bytes());
     prefix.extend_from_slice(&difficulty_bits.to_le_bytes());
     for transfer in transfers {
-        let tx = blake32(&[&transfer.proof, &encode_public(&transfer.public)]);
+        // Commit to every consensus-relevant transfer field, including
+        // signatures. A different signature must change the block id.
+        let tx = blake32(&[
+            &transfer.proof,
+            &encode_public(&transfer.public),
+            &transfer.user_pk,
+            &transfer.user_sig,
+            &transfer.envelope_sig,
+        ]);
         prefix.extend_from_slice(&tx);
     }
     prefix.extend_from_slice(&coinbase_bytes(coinbase));
@@ -743,12 +751,17 @@ pub fn mine_block(
 /// is the caller's bug; the tag rejects tampering.
 pub fn encrypt_note(key: &[u8], plaintext: &[u8]) -> Vec<u8> {
     let mut nonce = [0u8; 16];
-    for (i, b) in blake32(&[key, plaintext, &plaintext.len().to_le_bytes()]).iter().take(16).enumerate() {
-        nonce[i] = *b;
+    // Fresh nonce per ciphertext. Identical plaintexts under the same key
+    // produce different ciphertexts. Still a custom construction; replace
+    // with a vetted AEAD (XChaCha20-Poly1305) before any production use.
+    if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
+        use std::io::Read;
+        let _ = f.read_exact(&mut nonce);
+    } else {
+        for (i, b) in blake32(&[key, plaintext, &plaintext.len().to_le_bytes()]).iter().take(16).enumerate() {
+            nonce[i] = *b;
+        }
     }
-    // Mix a counter so identical plaintexts under the same key differ if the
-    // caller passes a unique suffix. Here the nonce is derived; callers who
-    // need randomness should prepend their own.
     let mut body = plaintext.to_vec();
     let mut counter = 0u64;
     let mut offset = 0;

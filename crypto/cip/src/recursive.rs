@@ -1,7 +1,9 @@
-//! Winterfell verifier-in-circuit AIR for recursive aggregation.
+//! Aggregate fold helper. NOT a Winterfell verifier circuit.
 //!
-//! Proves that a sequence of spend digests was folded with Poseidon2 under
-//! DOM_AGG into the public commitment. The node verifies one proof.
+//! The transition constraints copy columns. They do not constrain a
+//! Poseidon2 fold and do not verify underlying STARK proofs. Sound
+//! aggregation is `aggregate()`, which calls `verify_bytes` natively
+//! and then folds. Do not present this AIR as recursive verification.
 
 use winterfell::math::fields::f64::BaseElement;
 use winterfell::math::{FieldElement, ToElements};
