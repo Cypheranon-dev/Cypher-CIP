@@ -45,8 +45,12 @@ pub struct Transfer {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Coinbase {
+    /// Private field spend key. Not serialized.
     pub sk: u64,
     pub commitment: [u64; 4],
+    /// Proof the commitment opens to the scheduled reward under a private sk.
+    pub proof: Vec<u8>,
+    pub public: [u64; PUBLIC_LEN],
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -192,12 +196,17 @@ pub fn pow_prefix(
     for transfer in transfers {
         // Commit to every consensus-relevant transfer field, including
         // signatures. A different signature must change the block id.
+        let mut extra = Vec::new();
+        for sig in &transfer.extra_envelope_sigs {
+            extra.extend_from_slice(sig);
+        }
         let tx = blake32(&[
             &transfer.proof,
             &encode_public(&transfer.public),
             &transfer.user_pk,
             &transfer.user_sig,
             &transfer.envelope_sig,
+            &extra,
         ]);
         prefix.extend_from_slice(&tx);
     }
@@ -664,16 +673,18 @@ impl Chain {
             )?;
         }
         if let Some(coinbase) = &block.coinbase {
-            // Commitment is fully determined by public data: reward, the
-            // miner's Dilithium key, and height. Wire blocks have sk = 0;
-            // that must not skip the check.
-            let seed = field_seed_from_pk(&block.coinbase_pk);
-            let expected = digest_words(note_commitment(
-                block_reward(block.height),
-                seed,
-                block.height,
-            )?);
-            if coinbase.commitment != expected {
+            // Spend key is private. The proof must open the commitment to
+            // the scheduled reward. Do not derive the key from a public value.
+            let reward = block_reward(block.height);
+            let public = PublicInputs::try_from_u64s(coinbase.public)?;
+            verify_bytes(&coinbase.proof, public.clone())?;
+            if digest_words(public.output) != coinbase.commitment {
+                return Err("coinbase");
+            }
+            if public.payload.as_int() != reward {
+                return Err("coinbase");
+            }
+            if public.height.as_int() != block.height {
                 return Err("coinbase");
             }
             if note_exists(&ledger.trees, &coinbase.commitment)
@@ -754,7 +765,7 @@ pub fn mine_block(
 /// Authenticated note encryption. Fresh 16-byte nonce, Blake2b keystream,
 /// 16-byte tag over nonce||ciphertext. Reusing a nonce with the same key
 /// is the caller's bug; the tag rejects tampering.
-pub fn encrypt_note(key: &[u8], plaintext: &[u8]) -> Vec<u8> {
+pub fn encrypt_note(key: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, &'static str> {
     let mut nonce = [0u8; 16];
     // Fresh nonce per ciphertext. Identical plaintexts under the same key
     // produce different ciphertexts. Still a custom construction; replace
@@ -789,7 +800,7 @@ pub fn encrypt_note(key: &[u8], plaintext: &[u8]) -> Vec<u8> {
     let mut out = nonce.to_vec();
     out.extend_from_slice(&body);
     out.extend_from_slice(&tag[..16]);
-    out
+    Ok(out)
 }
 
 pub fn decrypt_note(key: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, &'static str> {
@@ -1005,6 +1016,8 @@ mod tests {
         let bad_coin = Coinbase {
             sk: 5,
             commitment: [1, 2, 3, 4],
+            proof: Vec::new(),
+            public: [0; PUBLIC_LEN],
         };
         let bad_mint = mine_block(
             chain.tip(),
@@ -1017,11 +1030,30 @@ mod tests {
             &miner.secret,
         )
         .unwrap();
-        assert_eq!(chain.append(bad_mint).err(), Some("coinbase"));
+        assert!(chain.append(bad_mint).is_err());
 
         let reward = block_reward(2);
-        let seed = field_seed_from_pk(&miner.public);
-        let minted = digest_words(note_commitment(reward, seed, 2).unwrap());
+        let sk = 5u64;
+        let input = digest_words(note_commitment(reward, sk, 2).unwrap());
+        let mut leaves = [[0u64; 4]; LEAVES];
+        leaves[0] = input;
+        let mut chain_state = [0u64; 4];
+        chain_state[3] = 0xC01B;
+        let witness = cypher_cip::Witness {
+            sk,
+            r_in: 2,
+            rho_out: 2,
+            amount_in: reward,
+            amount_out: reward,
+            fee: 0,
+            height: 2,
+            payload: reward,
+            chain_state,
+            index: 0,
+            leaves,
+        };
+        let (proof, public) = cypher_cip::prove(&witness).unwrap();
+        let minted = digest_words(public.output);
         let good_mint = mine_block(
             chain.tip(),
             2,
@@ -1029,8 +1061,10 @@ mod tests {
             4,
             Vec::new(),
             Some(Coinbase {
-                sk: seed,
+                sk,
                 commitment: minted,
+                proof: proof.to_bytes(),
+                public: public.to_u64s(),
             }),
             &miner.public,
             &miner.secret,

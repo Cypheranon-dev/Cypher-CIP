@@ -72,21 +72,41 @@ impl Node {
             .filter(|tx| self.chain.check_transfer(tx).is_ok())
             .cloned()
             .collect();
-        let seed = crate::field_seed_from_pk(&self.miner_pk);
-        let commitment = digest_words(note_commitment(
-            block_reward(self.chain.height() + 1),
-            seed,
-            self.chain.height() + 1,
-        )?);
+        let height = self.chain.height() + 1;
+        let reward = block_reward(height);
+        let sk = self.field_sk;
+        // Private spend key. Prove the output note is worth exactly the reward.
+        let input = digest_words(note_commitment(reward, sk, height)?);
+        let mut leaves = [[0u64; 4]; cypher_cip::LEAVES];
+        leaves[0] = input;
+        let mut chain_state = [0u64; 4];
+        chain_state[3] = 0xC01B;
+        let witness = cypher_cip::Witness {
+            sk,
+            r_in: height,
+            rho_out: height,
+            amount_in: reward,
+            amount_out: reward,
+            fee: 0,
+            height,
+            payload: reward,
+            chain_state,
+            index: 0,
+            leaves,
+        };
+        let (proof, public) = cypher_cip::prove(&witness)?;
+        let commitment = digest_words(public.output);
         let block = mine_block(
             self.chain.tip(),
-            self.chain.height() + 1,
+            height,
             timestamp,
             self.chain.difficulty_bits(),
             transfers,
             Some(Coinbase {
-                sk: seed,
+                sk,
                 commitment,
+                proof: proof.to_bytes(),
+                public: public.to_u64s(),
             }),
             &self.miner_pk,
             &self.miner_sk,
@@ -139,8 +159,8 @@ pub fn exchange(stream: &mut TcpStream, chain: &mut Chain) -> Result<(), String>
     }
     let mut hello = Input::new(&payload);
     let remote_height = hello.u64().map_err(|err| err.to_string())?;
-    let _remote_work = hello.u128().map_err(|err| err.to_string())?;
-    if remote_height > chain.height() {
+    let remote_work = hello.u128().map_err(|err| err.to_string())?;
+    if remote_work > chain.work() || remote_height > chain.height() {
         let mut body = Vec::new();
         body.extend_from_slice(&chain.height().to_le_bytes());
         send(stream, GET_BLOCKS, &body)?;
@@ -250,6 +270,7 @@ impl Node {
         body.extend_from_slice(&id);
         body.extend_from_slice(&(sig.len() as u32).to_le_bytes());
         body.extend_from_slice(&sig);
+        wire::write_blocks(&mut body, &[block.clone()]);
         let mut results = Vec::new();
         for peer in &self.peers {
             match TcpStream::connect_timeout(
