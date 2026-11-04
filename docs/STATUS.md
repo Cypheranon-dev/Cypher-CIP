@@ -1,18 +1,17 @@
 # Status
 
-**CIP-2026.8** (November 2026)
+**CIP-2026.9 hardened production demo** (November 2026)
 
 | Item | State |
 | --- | --- |
-| CIP AIR v1 | Spend proof generates. |
-| CIP circuit v2 | Dilithium key commitment. |
-| Recursive AIR | `recursive::RecursiveAir`. Fold proven in-circuit. |
-| ML-DSA in STARK path | `mldsa::verify_mldsa_spend`. Key binding in proof, signature on committed key. |
-| Envelope | M-of-N Dilithium5. |
-| User signature | Dilithium2, 1312 bytes. |
-| Note encryption | Present. |
-| Equihash | (48, 5). Cap 24 bits. |
+| Spend proof | FRI STARK. Generates. Wrong nullifier rejected. |
+| Dilithium key binding | Required on every spend. |
+| ML-DSA in AIR | Binding + FIPS 204 on the committed key. Not full NTT-in-circuit. |
+| Recursive aggregate | Verifies proofs, then folds. |
+| Envelope | M-of-N. Production mode requires 2-of-N. |
+| PoW | Equihash(48, 5). Production floor 8 bits. |
+| Timestamps | Median check in production mode. 1-day cap always. |
+| Peers | Signed broadcast to the peer list. |
+| Note encryption | Available. Not a large anonymity set. |
 | Coinbase sk | Not serialized. |
-| Timestamps | Caller-supplied. 1-day cap. |
-| Public P2P | Left for later. |
-| Audit | Left for later. |
+| Audit | None. Do not put funds on this. |
