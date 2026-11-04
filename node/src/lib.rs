@@ -919,7 +919,11 @@ mod tests {
         let infra = Keypair::dilithium5();
         let user = Keypair::dilithium2();
         let miner = Keypair::dilithium2();
-        let witness = funded(chain_words(&[0u8; 32]), 77);
+        let mut witness = funded(chain_words(&[0u8; 32]), 77);
+        // Payload is constrained by the STARK. Bind it to the user key
+        // so the spend is accepted only for this Dilithium key.
+        let commit = cypher_cip::mldsa::prove_key_binding(&user.public).unwrap();
+        witness.payload = commit[0];
         let (transfer, leaves) = signed_transfer(&infra, &user, &witness);
         let mut chain = Chain::open(infra.public.clone(), leaves, 4).unwrap();
 
@@ -1008,7 +1012,8 @@ mod tests {
         assert_eq!(chain.append(bad_mint).err(), Some("coinbase"));
 
         let reward = block_reward(2);
-        let minted = digest_words(note_commitment(reward, 5, 2).unwrap());
+        let seed = field_seed_from_pk(&miner.public);
+        let minted = digest_words(note_commitment(reward, seed, 2).unwrap());
         let good_mint = mine_block(
             chain.tip(),
             2,
@@ -1016,7 +1021,7 @@ mod tests {
             4,
             Vec::new(),
             Some(Coinbase {
-                sk: 5,
+                sk: seed,
                 commitment: minted,
             }),
             &miner.public,
