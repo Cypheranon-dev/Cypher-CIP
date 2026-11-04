@@ -108,7 +108,11 @@ impl Air for RecursiveAir {
     fn get_assertions(&self) -> Vec<Assertion<BaseElement>> {
         let mut a = Vec::with_capacity(N_ASSERTIONS);
         for lane in 0..4 {
-            a.push(Assertion::single(lane, TRACE_LEN - 1, self.public.commit[lane]));
+            a.push(Assertion::single(
+                lane,
+                TRACE_LEN - 1,
+                self.public.commit[lane],
+            ));
         }
         a.push(Assertion::single(8, TRACE_LEN - 1, self.public.count));
         a

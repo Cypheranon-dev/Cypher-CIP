@@ -234,7 +234,6 @@ impl Node {
     }
 }
 
-
 impl Node {
     /// Authenticated broadcast. Signs the block id with the miner key and
     /// sends to every peer. Receivers must verify the Dilithium2 signature.
@@ -242,8 +241,8 @@ impl Node {
     /// protocol. Signs the block id. This is authenticated point-to-point
     /// push, not a public gossip network and not Sybil-resistant.
     pub fn broadcast(&self, block: &crate::Block) -> Vec<(String, String)> {
-        use std::net::TcpStream;
         use cypher_dilithium::sign2;
+        use std::net::TcpStream;
         let id = crate::block_id(block);
         let sig = sign2(&self.miner_sk, &id);
         let mut body = Vec::new();
@@ -253,7 +252,9 @@ impl Node {
         let mut results = Vec::new();
         for peer in &self.peers {
             match TcpStream::connect_timeout(
-                &peer.parse().unwrap_or_else(|_| "127.0.0.1:1".parse().unwrap()),
+                &peer
+                    .parse()
+                    .unwrap_or_else(|_| "127.0.0.1:1".parse().unwrap()),
                 std::time::Duration::from_secs(2),
             ) {
                 Ok(mut stream) => match send(&mut stream, 0x05, &body) {

@@ -80,7 +80,12 @@ pub fn aggregate(spends: &[SpendRef]) -> Result<Aggregate, &'static str> {
         };
     }
     Ok(Aggregate {
-        commit: [acc[0].as_int(), acc[1].as_int(), acc[2].as_int(), acc[3].as_int()],
+        commit: [
+            acc[0].as_int(),
+            acc[1].as_int(),
+            acc[2].as_int(),
+            acc[3].as_int(),
+        ],
         count: spends.len() as u64,
     })
 }
@@ -100,7 +105,12 @@ pub fn commit_publics(publics: &[PublicInputs]) -> Result<[u64; 4], &'static str
             fold(acc, dig)
         };
     }
-    Ok([acc[0].as_int(), acc[1].as_int(), acc[2].as_int(), acc[3].as_int()])
+    Ok([
+        acc[0].as_int(),
+        acc[1].as_int(),
+        acc[2].as_int(),
+        acc[3].as_int(),
+    ])
 }
 
 #[cfg(test)]

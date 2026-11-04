@@ -137,10 +137,12 @@ fn encode_public(public: &[u64; PUBLIC_LEN]) -> Vec<u8> {
     out
 }
 
-
 /// Verify an aggregate commitment against a list of already-checked publics.
 /// The block may carry this instead of re-checking every proof.
-pub fn check_aggregate(commit: [u64; 4], publics: &[cypher_cip::PublicInputs]) -> Result<(), &'static str> {
+pub fn check_aggregate(
+    commit: [u64; 4],
+    publics: &[cypher_cip::PublicInputs],
+) -> Result<(), &'static str> {
     let expected = cypher_cip::aggregate::commit_publics(publics)?;
     if expected != commit {
         return Err("aggregate");
@@ -562,8 +564,8 @@ impl Chain {
         // Bind the Dilithium key into the STARK statement via payload.
         // The proof already constrains payload. It must equal the first
         // lane of the key commitment, so the witness is tied to this key.
-        let commit = cypher_cip::mldsa::prove_key_binding(&transfer.user_pk)
-            .map_err(|_| "user key")?;
+        let commit =
+            cypher_cip::mldsa::prove_key_binding(&transfer.user_pk).map_err(|_| "user key")?;
         if public.payload.as_int() != commit[0] {
             return Err("key not bound");
         }
@@ -612,7 +614,10 @@ impl Chain {
             if self.production {
                 let recent: Vec<u64> = ledger.timestamps.iter().rev().take(11).cloned().collect();
                 if recent.len() >= 3 {
-                    let mut gaps: Vec<u64> = recent.windows(2).map(|w| w[0].saturating_sub(w[1])).collect();
+                    let mut gaps: Vec<u64> = recent
+                        .windows(2)
+                        .map(|w| w[0].saturating_sub(w[1]))
+                        .collect();
                     gaps.sort_unstable();
                     let median = gaps[gaps.len() / 2].max(1);
                     let jump = block.timestamp.saturating_sub(previous);
@@ -758,7 +763,11 @@ pub fn encrypt_note(key: &[u8], plaintext: &[u8]) -> Vec<u8> {
         use std::io::Read;
         let _ = f.read_exact(&mut nonce);
     } else {
-        for (i, b) in blake32(&[key, plaintext, &plaintext.len().to_le_bytes()]).iter().take(16).enumerate() {
+        for (i, b) in blake32(&[key, plaintext, &plaintext.len().to_le_bytes()])
+            .iter()
+            .take(16)
+            .enumerate()
+        {
             nonce[i] = *b;
         }
     }
@@ -817,7 +826,6 @@ pub fn field_seed_from_pk(pk: &[u8]) -> u64 {
     let h = blake32(&[pk]);
     u64::from_le_bytes(h[..8].try_into().unwrap())
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -1104,7 +1112,6 @@ mod tests {
         assert_eq!(loaded.chain.note_trees(), 2);
         assert_eq!(loaded.chain.height(), 9);
     }
-
 
     #[test]
     fn threshold_rejects_bad_m() {
