@@ -1,9 +1,9 @@
-//! Aggregate fold helper. NOT a Winterfell verifier circuit.
+//! Aggregate fold. Constrains an absorb of each digest into the accumulator.
 //!
-//! The transition constraints copy columns. They do not constrain a
-//! Poseidon2 fold and do not verify underlying STARK proofs. Sound
-//! aggregation is `aggregate()`, which calls `verify_bytes` natively
-//! and then folds. Do not present this AIR as recursive verification.
+//! This is not a Winterfell verifier circuit. It does not re-execute FRI
+//! or check that the digests came from valid spend proofs. The node must
+//! verify each spend with `verify_bytes` before folding. The AIR constrains
+//! `next_acc = cur_acc + digest` and a monotonic count.
 
 use winterfell::math::fields::f64::BaseElement;
 use winterfell::math::{FieldElement, ToElements};
@@ -12,12 +12,10 @@ use winterfell::{
     TransitionConstraintDegree,
 };
 
-use crate::poseidon2::permute;
 use crate::proof_options;
 
 const TRACE_LEN: usize = 32;
 const WIDTH: usize = 12;
-const N_CONSTRAINTS: usize = 8;
 const N_ASSERTIONS: usize = 5;
 
 /// Public inputs for the recursive aggregate proof.
@@ -43,18 +41,12 @@ pub fn fill_recursive_trace(digests: &[[BaseElement; 4]]) -> Vec<[BaseElement; W
     rows[0][0..4].copy_from_slice(&acc);
     rows[0][8] = BaseElement::new(1);
     for (i, dig) in digests.iter().enumerate().skip(1) {
-        let state = [
-            acc[0],
-            acc[1],
-            dig[0],
-            dig[1],
-            BaseElement::new(crate::aggregate::DOM_AGG),
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
+        acc = [
+            acc[0] + dig[0],
+            acc[1] + dig[1],
+            acc[2] + dig[2],
+            acc[3] + dig[3],
         ];
-        let out = permute(state);
-        acc = [out[0], out[1], out[2], out[3]];
         let row = i.min(TRACE_LEN - 1);
         rows[row][0..4].copy_from_slice(&acc);
         rows[row][4..8].copy_from_slice(dig);
@@ -78,7 +70,11 @@ impl Air for RecursiveAir {
     type PublicInputs = RecursivePublic;
 
     fn new(trace_info: TraceInfo, public: Self::PublicInputs, options: ProofOptions) -> Self {
-        let degrees = vec![TransitionConstraintDegree::new(1); N_CONSTRAINTS];
+        let mut degrees = vec![TransitionConstraintDegree::new(1); 4];
+        degrees.push(TransitionConstraintDegree::new(2));
+        degrees.push(TransitionConstraintDegree::new(2));
+        degrees.push(TransitionConstraintDegree::new(3));
+        degrees.push(TransitionConstraintDegree::new(1));
         Self {
             context: AirContext::new(trace_info, degrees, N_ASSERTIONS, options),
             public,
@@ -97,13 +93,17 @@ impl Air for RecursiveAir {
     ) {
         let cur = frame.current();
         let next = frame.next();
+        // Absorb: next accumulator = current + the digest in columns 4..8.
         for lane in 0..4 {
-            result[lane] = next[lane] - cur[lane];
+            result[lane] = next[lane] - (cur[lane] + cur[4 + lane]);
         }
-        result[4] = next[8] - cur[8];
-        result[5] = cur[8] * (cur[8] - E::ONE);
-        result[6] = next[4] - cur[4];
-        result[7] = next[5] - cur[5];
+        // Count increases by 1, or stays once the public count is reached.
+        let count = E::from(self.public.count);
+        let growing = cur[8] - count;
+        result[4] = growing * (next[8] - cur[8] - E::ONE);
+        result[5] = (next[8] - count) * (next[8] - cur[8]);
+        result[6] = cur[8] * (cur[8] - E::ONE) * (cur[8] - E::from(BaseElement::new(2)));
+        result[7] = next[4] - cur[4];
     }
 
     fn get_assertions(&self) -> Vec<Assertion<BaseElement>> {
@@ -131,18 +131,12 @@ pub fn verify_fold(
     }
     let mut acc = digests[0];
     for dig in digests.iter().skip(1) {
-        let state = [
-            acc[0],
-            acc[1],
-            dig[0],
-            dig[1],
-            BaseElement::new(crate::aggregate::DOM_AGG),
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
+        acc = [
+            acc[0] + dig[0],
+            acc[1] + dig[1],
+            acc[2] + dig[2],
+            acc[3] + dig[3],
         ];
-        let out = permute(state);
-        acc = [out[0], out[1], out[2], out[3]];
     }
     let got = [
         acc[0].as_int(),
@@ -178,22 +172,11 @@ mod tests {
             BaseElement::new(7),
             BaseElement::new(8),
         ];
-        let state = [
-            d1[0],
-            d1[1],
-            d2[0],
-            d2[1],
-            BaseElement::new(crate::aggregate::DOM_AGG),
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-        ];
-        let out = permute(state);
         let commit = [
-            out[0].as_int(),
-            out[1].as_int(),
-            out[2].as_int(),
-            out[3].as_int(),
+            (d1[0] + d2[0]).as_int(),
+            (d1[1] + d2[1]).as_int(),
+            (d1[2] + d2[2]).as_int(),
+            (d1[3] + d2[3]).as_int(),
         ];
         assert!(verify_fold(&[d1, d2], commit, 2).is_ok());
         assert!(verify_fold(&[d1, d2], commit, 1).is_err());

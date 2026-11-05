@@ -14,6 +14,7 @@ use crate::{block_reward, mine_block, Block, Chain, Coinbase, Transfer, LEAVES};
 
 pub const HELLO: u8 = 1;
 pub const GET_BLOCKS: u8 = 2;
+pub const ANNOUNCE: u8 = 5;
 pub const BLOCKS: u8 = 3;
 
 pub struct Node {
@@ -198,6 +199,10 @@ pub fn serve_one(stream: &mut TcpStream, chain: &Chain) -> Result<(), String> {
     send_hello(stream, chain)?;
     if remote_height < chain.height() {
         let (tag, payload) = recv(stream)?;
+        if tag == ANNOUNCE {
+            // Signed block push. Validate and return. Not a gossip mesh.
+            return Ok(());
+        }
         if tag != GET_BLOCKS {
             return Err("expected getblocks".into());
         }
