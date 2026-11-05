@@ -93,6 +93,7 @@ impl Node {
             chain_state,
             index: 0,
             leaves,
+            coinbase: true,
         };
         let (proof, public) = cypher_cip::prove(&witness)?;
         let commitment = digest_words(public.output);

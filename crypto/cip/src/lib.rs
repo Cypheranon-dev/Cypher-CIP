@@ -59,7 +59,8 @@ const CHAIN: usize = 16;
 const BIT: usize = 20;
 const SIB: usize = 23;
 const RANGE: usize = 35;
-const WIDTH: usize = 131;
+const WIDTH: usize = 132;
+const FLAG: usize = 131;
 
 const ROOT_ROW: usize = 3 * SLOT_ROWS + (SLOT_ROWS - 1);
 const NULL_ROW: usize = 4 * SLOT_ROWS + (SLOT_ROWS - 1);
@@ -81,11 +82,11 @@ const N_PATH_BOOL: usize = DEPTH;
 const N_RANGE_BOOL: usize = AMOUNT_BITS * 3;
 const N_RANGE_SUM: usize = 3;
 const N_CONSTRAINTS: usize =
-    N_STATE + N_ROW0 + N_CONST + N_PATH_BOOL + N_RANGE_BOOL + N_RANGE_SUM + 1;
-const N_ASSERTIONS: usize = 23;
+    N_STATE + N_ROW0 + N_CONST + N_PATH_BOOL + N_RANGE_BOOL + N_RANGE_SUM + 3;
+const N_ASSERTIONS: usize = 24;
 
 /// Little-endian public inputs. 4-element digests, then scalars.
-pub const PUBLIC_LEN: usize = 23;
+pub const PUBLIC_LEN: usize = 24;
 const GOLDILOCKS_MODULUS: u64 = 0xffff_ffff_0000_0001;
 
 pub type Digest = [BaseElement; 4];
@@ -214,6 +215,8 @@ pub struct PublicInputs {
     pub fee: BaseElement,
     pub payload: BaseElement,
     pub chain_state: Digest,
+    /// 1 when this proof is a coinbase and payload must equal amount_in.
+    pub coinbase_flag: BaseElement,
 }
 
 impl ToElements<BaseElement> for PublicInputs {
@@ -227,6 +230,7 @@ impl ToElements<BaseElement> for PublicInputs {
         out.push(self.fee);
         out.push(self.payload);
         out.extend_from_slice(&self.chain_state);
+        out.push(self.coinbase_flag);
         out
     }
 }
@@ -242,6 +246,7 @@ impl PublicInputs {
         out[17] = self.fee.as_int();
         out[18] = self.payload.as_int();
         out[19..23].copy_from_slice(&digest_words(self.chain_state));
+        out[23] = self.coinbase_flag.as_int();
         out
     }
 
@@ -263,6 +268,7 @@ impl PublicInputs {
             fee: checked_fe(fit_u32(values[17])?)?,
             payload: checked_fe(values[18])?,
             chain_state: digest(19)?,
+            coinbase_flag: checked_fe(values[23])?,
         })
     }
 }
@@ -280,6 +286,8 @@ pub struct Witness {
     pub chain_state: [u64; 4],
     pub index: usize,
     pub leaves: [[u64; 4]; LEAVES],
+    /// When true, payload must equal amount_in inside the AIR.
+    pub coinbase: bool,
 }
 
 struct Prepared {
@@ -362,6 +370,11 @@ fn prepare_inner(witness: &Witness) -> Result<Prepared, &'static str> {
             fee: fe(fee),
             payload: checked_fe(witness.payload)?,
             chain_state,
+            coinbase_flag: if witness.coinbase {
+                BaseElement::ONE
+            } else {
+                BaseElement::ZERO
+            },
         },
         sk: checked_fe(witness.sk)?,
         r_in: checked_fe(witness.r_in)?,
@@ -496,6 +509,11 @@ fn constraint_degrees() -> Vec<TransitionConstraintDegree> {
     for _ in 0..N_RANGE_SUM + 1 {
         degrees.push(TransitionConstraintDegree::new(1));
     }
+    // Both are identically zero on a valid trace (flag is 0 or 1,
+    // and flag = 1 implies payload = amount_in). Winterfell measures
+    // that as degree 0, which is new(1) after the divisor.
+    degrees.push(TransitionConstraintDegree::new(1));
+    degrees.push(TransitionConstraintDegree::new(1));
     degrees
 }
 
@@ -520,6 +538,7 @@ fn fill_row(row: &mut [BaseElement], prep: &Prepared, state: [BaseElement; 8]) {
     row[PAYLOAD] = prep.payload;
     row[RHO] = prep.rho_out;
     row[CHAIN..CHAIN + 4].copy_from_slice(&prep.chain_state);
+    row[FLAG] = prep.public.coinbase_flag;
     for depth in 0..DEPTH {
         row[BIT + depth] = prep.bits[depth];
         row[SIB + depth * 4..SIB + depth * 4 + 4].copy_from_slice(&prep.siblings[depth]);
@@ -699,6 +718,12 @@ impl Air for CipAir {
             index += 1;
         }
         result[index] = cur[AMT_IN] - cur[AMT_OUT] - cur[FEE];
+        index += 1;
+        // Flag is 0 or 1.
+        result[index] = cur[FLAG] * (cur[FLAG] - E::ONE);
+        index += 1;
+        // Coinbase proofs (flag = 1) must have payload == amount_in.
+        result[index] = cur[FLAG] * (cur[PAYLOAD] - cur[AMT_IN]);
         debug_assert_eq!(index + 1, N_CONSTRAINTS);
     }
 
@@ -716,6 +741,7 @@ impl Air for CipAir {
         assertions.push(Assertion::single(HEIGHT, 0, self.public.height));
         assertions.push(Assertion::single(FEE, 0, self.public.fee));
         assertions.push(Assertion::single(PAYLOAD, 0, self.public.payload));
+        assertions.push(Assertion::single(FLAG, 0, self.public.coinbase_flag));
         for lane in 0..4 {
             assertions.push(Assertion::single(
                 CHAIN + lane,
@@ -771,6 +797,7 @@ impl Prover for CipProver {
                 trace.get(CHAIN + 2, 0),
                 trace.get(CHAIN + 3, 0),
             ],
+            coinbase_flag: trace.get(FLAG, 0),
         }
     }
 
@@ -867,6 +894,7 @@ mod tests {
             chain_state: [1, 2, 3, 4],
             index: 3,
             leaves,
+            coinbase: false,
         }
     }
 
