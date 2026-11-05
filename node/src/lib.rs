@@ -682,6 +682,9 @@ impl Chain {
             if public.payload.as_int() != reward {
                 return Err("coinbase");
             }
+            if public.coinbase_flag.as_int() != 1 {
+                return Err("coinbase");
+            }
             if public.height.as_int() != block.height {
                 return Err("coinbase");
             }
@@ -760,77 +763,43 @@ pub fn mine_block(
 
 /// Note encryption. Keystream from Blake2b so the ciphertext can travel
 /// with the proof. The recipient derives the same key from a shared secret.
-/// Authenticated note encryption. Fresh 16-byte nonce, Blake2b keystream,
-/// 16-byte tag over nonce||ciphertext. Reusing a nonce with the same key
-/// is the caller's bug; the tag rejects tampering.
+/// XChaCha20-Poly1305. 24-byte nonce, 16-byte tag. Fails closed without entropy.
 pub fn encrypt_note(key: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, &'static str> {
-    let mut nonce = [0u8; 16];
-    // Fresh nonce per ciphertext. Identical plaintexts under the same key
-    // produce different ciphertexts. Still a custom construction; replace
-    // with a vetted AEAD (XChaCha20-Poly1305) before any production use.
-    if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
-        use std::io::Read;
-        let _ = f.read_exact(&mut nonce);
-    } else {
-        for (i, b) in blake32(&[key, plaintext, &plaintext.len().to_le_bytes()])
-            .iter()
-            .take(16)
-            .enumerate()
-        {
-            nonce[i] = *b;
-        }
-    }
-    let mut body = plaintext.to_vec();
-    let mut counter = 0u64;
-    let mut offset = 0;
-    while offset < body.len() {
-        let block = blake32(&[key, &nonce, &counter.to_le_bytes()]);
-        for b in block {
-            if offset >= body.len() {
-                break;
-            }
-            body[offset] ^= b;
-            offset += 1;
-        }
-        counter += 1;
-    }
-    let tag = blake32(&[key, &nonce, &body]);
+    use chacha20poly1305::{
+        aead::{Aead, KeyInit},
+        XChaCha20Poly1305, XNonce,
+    };
+    use std::io::Read;
+    let mut k = [0u8; 32];
+    k.copy_from_slice(&blake32(&[b"Cypher-CIP/note-key/v1", key])[..32]);
+    let mut nonce = [0u8; 24];
+    let mut f = std::fs::File::open("/dev/urandom").map_err(|_| "entropy")?;
+    f.read_exact(&mut nonce).map_err(|_| "entropy")?;
+    let cipher = XChaCha20Poly1305::new((&k).into());
+    let body = cipher
+        .encrypt(XNonce::from_slice(&nonce), plaintext)
+        .map_err(|_| "encrypt")?;
     let mut out = nonce.to_vec();
     out.extend_from_slice(&body);
-    out.extend_from_slice(&tag[..16]);
     Ok(out)
 }
 
 pub fn decrypt_note(key: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, &'static str> {
-    if ciphertext.len() < 32 {
+    use chacha20poly1305::{
+        aead::{Aead, KeyInit},
+        XChaCha20Poly1305, XNonce,
+    };
+    if ciphertext.len() < 24 + 16 {
         return Err("ciphertext");
     }
-    let nonce = &ciphertext[..16];
-    let tag = &ciphertext[ciphertext.len() - 16..];
-    let body = &ciphertext[16..ciphertext.len() - 16];
-    let expect = blake32(&[key, nonce, body]);
-    if tag != &expect[..16] {
-        return Err("tag");
-    }
-    let mut plain = body.to_vec();
-    let mut counter = 0u64;
-    let mut offset = 0;
-    while offset < plain.len() {
-        let block = blake32(&[key, nonce, &counter.to_le_bytes()]);
-        for b in block {
-            if offset >= plain.len() {
-                break;
-            }
-            plain[offset] ^= b;
-            offset += 1;
-        }
-        counter += 1;
-    }
-    Ok(plain)
+    let mut k = [0u8; 32];
+    k.copy_from_slice(&blake32(&[b"Cypher-CIP/note-key/v1", key])[..32]);
+    let cipher = XChaCha20Poly1305::new((&k).into());
+    cipher
+        .decrypt(XNonce::from_slice(&ciphertext[..24]), &ciphertext[24..])
+        .map_err(|_| "tag")
 }
 
-/// Derive a field spend seed from a Dilithium public key.
-/// New wallets should use this so the 64-bit field element is not the only secret.
 pub fn field_seed_from_pk(pk: &[u8]) -> u64 {
     let h = blake32(&[pk]);
     u64::from_le_bytes(h[..8].try_into().unwrap())
@@ -858,6 +827,7 @@ mod tests {
             chain_state: chain,
             index: 3,
             leaves,
+            coinbase: false,
         }
     }
 
@@ -1049,6 +1019,7 @@ mod tests {
             chain_state,
             index: 0,
             leaves,
+            coinbase: true,
         };
         let (proof, public) = cypher_cip::prove(&witness).unwrap();
         let minted = digest_words(public.output);
