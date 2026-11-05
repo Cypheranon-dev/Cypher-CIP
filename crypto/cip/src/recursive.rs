@@ -16,7 +16,6 @@ use crate::proof_options;
 
 const TRACE_LEN: usize = 32;
 const WIDTH: usize = 12;
-const N_CONSTRAINTS: usize = 8;
 const N_ASSERTIONS: usize = 5;
 
 /// Public inputs for the recursive aggregate proof.
