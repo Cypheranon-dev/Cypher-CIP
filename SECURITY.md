@@ -1,22 +1,28 @@
 # Security
 
-**CIP-2026.9 is a hardened demo. It is not hackproof. Do not put funds on it.**
+**Private testnet / pre-mainnet audit candidate.** Mainnet is not launched. Production release remains gated on independent audit, sustained testnet validation, and explicit project-owner approval.
 
-## What an attacker still can do
+The source repository is public. No mainnet is deployed. A green CI run is not proof of protocol security.
 
-- Brute-force Equihash(48, 5) at the demo difficulty.
-- Eclipse a single-peer or small-peer deployment.
-- Correlate the depth-3 note tree.
-- Exploit any bug in the AIR that an audit would have caught.
+## Material limitations
 
-## What this build closes
+- Full ML-DSA verification inside the STARK is not implemented. The signature is checked outside the proof.
+- The recursive AIR is a constrained fold, not a Winterfell verifier circuit.
+- Peer protocol is hello, work-based sync, and a signed announcement. It is not a gossip network and has no Sybil or eclipse defense.
+- Note tree is depth 3 (8 leaves). This is not a meaningful anonymity set.
+- Equihash(48, 5) is used at demo difficulty.
+- No independent audit has been completed.
 
-- Spend without a Dilithium key that opens the Poseidon2 commitment.
-- Envelope signed by fewer than M of N keys.
-- Coinbase field key on the wire.
-- Timestamp jumps that smash the retarget in production mode.
-- Unsigned block announcements.
+## What this build enforces
+
+- Spend proofs are accepted only under the protocol-pinned Winterfell parameters.
+- Envelope requires M of N infrastructure signatures.
+- Coinbase spend key is not serialized and is not derived from a public value.
+- Coinbase amount is constrained in the AIR when the coinbase flag is 1.
+- Note encryption is XChaCha20-Poly1305 and fails closed without entropy.
+- Wire parser enforces frame and count caps.
+- Hello rejects a mismatched network identifier.
 
 ## Reporting
 
-Email Contact@Cypheranon.com. No bounty yet.
+Report issues against this repository. Do not treat this tree as suitable for real funds until the mainnet gates in `docs/STATUS.md` are evidenced.
