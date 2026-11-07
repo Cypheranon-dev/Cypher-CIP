@@ -12,6 +12,7 @@ use cypher_dilithium::Keypair;
 use crate::wire::{self, Input};
 use crate::{block_reward, mine_block, Block, Chain, Coinbase, Transfer, LEAVES};
 
+pub const NETWORK_ID: &[u8] = b"cypher-testnet-0";
 pub const HELLO: u8 = 1;
 pub const GET_BLOCKS: u8 = 2;
 pub const ANNOUNCE: u8 = 5;
@@ -160,6 +161,7 @@ pub fn exchange(stream: &mut TcpStream, chain: &mut Chain) -> Result<(), String>
         return Err("expected hello".into());
     }
     let mut hello = Input::new(&payload);
+    check_network(&mut hello)?;
     let remote_height = hello.u64().map_err(|err| err.to_string())?;
     let remote_work = hello.u128().map_err(|err| err.to_string())?;
     if remote_work > chain.work() || remote_height > chain.height() {
@@ -194,6 +196,7 @@ pub fn serve_one(stream: &mut TcpStream, chain: &Chain) -> Result<(), String> {
         return Err("expected hello".into());
     }
     let mut hello = Input::new(&payload);
+    check_network(&mut hello)?;
     let remote_height = hello.u64().map_err(|err| err.to_string())?;
     let _remote_work = hello.u128().map_err(|err| err.to_string())?;
     send_hello(stream, chain)?;
@@ -221,10 +224,20 @@ pub fn serve_one(stream: &mut TcpStream, chain: &Chain) -> Result<(), String> {
 
 fn send_hello(stream: &mut TcpStream, chain: &Chain) -> Result<(), String> {
     let mut body = Vec::new();
+    body.extend_from_slice(&(NETWORK_ID.len() as u32).to_le_bytes());
+    body.extend_from_slice(NETWORK_ID);
     body.extend_from_slice(&chain.height().to_le_bytes());
     body.extend_from_slice(&chain.work().to_le_bytes());
     body.extend_from_slice(&chain.tip());
     send(stream, HELLO, &body)
+}
+
+fn check_network(hello: &mut Input) -> Result<(), String> {
+    let id = hello.bytes().map_err(|e| e.to_string())?;
+    if id.len() > 64 || id.as_slice() != NETWORK_ID {
+        return Err("wrong network".into());
+    }
+    Ok(())
 }
 
 fn send(stream: &mut TcpStream, tag: u8, payload: &[u8]) -> Result<(), String> {
