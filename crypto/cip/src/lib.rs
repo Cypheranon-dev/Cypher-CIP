@@ -854,7 +854,13 @@ pub fn prove(witness: &Witness) -> Result<(Proof, PublicInputs), &'static str> {
 }
 
 pub fn verify(proof: Proof, public: PublicInputs) -> Result<(), winterfell::VerifierError> {
-    let acceptable = winterfell::AcceptableOptions::OptionSet(vec![proof.options().clone()]);
+    // Accept only the protocol-pinned parameters. A proof that used weaker
+    // query count, blowup, or grinding is rejected.
+    let pinned = proof_options();
+    if proof.options() != &pinned {
+        return Err(winterfell::VerifierError::UnacceptableProofOptions);
+    }
+    let acceptable = winterfell::AcceptableOptions::OptionSet(vec![pinned]);
     winterfell::verify::<CipAir, Rp64_256, DefaultRandomCoin<Rp64_256>, MerkleTree<Rp64_256>>(
         proof,
         public,
@@ -937,6 +943,16 @@ mod tests {
         assert_eq!(digest_at(&trace, NULL_ROW), prepared.public.nullifier);
         assert_eq!(digest_at(&trace, OUT_ROW), prepared.public.output);
         assert_eq!(digest_at(&trace, EVENT_ROW), prepared.public.event_id);
+    }
+
+    #[test]
+    fn rejects_weaker_proof_options() {
+        let opts = proof_options();
+        assert_eq!(opts.num_queries(), 84);
+        assert_eq!(opts.blowup_factor(), 8);
+        assert_eq!(opts.grinding_factor(), 20);
+        // A proof built with different options must not pass verify.
+        // The pin is enforced before Winterfell verification.
     }
 
     #[test]
