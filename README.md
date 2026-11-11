@@ -2,7 +2,7 @@
 
 **Protocol foundation for Cypher — private by default, post-quantum ready.**
 
-**Status: private testnet / pre-mainnet audit candidate.** Mainnet is not launched. Production release remains gated on independent audit, sustained testnet validation, and explicit project-owner approval. See [docs/STATUS.md](docs/STATUS.md).
+**Status: under development.** Private testnet / pre-mainnet audit candidate. Mainnet is not launched. Production use is blocked pending completion of protocol work, independent audit, testnet validation, and explicit release approval. See [docs/STATUS.md](docs/STATUS.md).
 
 **Version: CIP-2026.11** — see [docs/VERSION.md](docs/VERSION.md).
 
