@@ -1,29 +1,28 @@
-# Phase 2 — Recursion spike
+# Phase 2 — Recursion
 
-**Status: comparison only. No production verifier.**
+**Status: path chosen. Interim is the Poseidon2 fold. No verifier circuit.**
 
-## Paths
+## Comparison
 
-### A. Port the AIR to Plonky2 or Plonky3
+| Path | Cost | Outcome |
+| --- | --- | --- |
+| Port AIR to Plonky2/3 | Full rewrite, new stack, discard Winterfell proofs and pinned options | Recursion becomes a library feature |
+| Custom Winterfell verifier AIR | Hundreds of thousands of constraints, FRI relation must be exact | Stays on current stack |
 
-Plonky2 and Plonky3 already use Goldilocks and a Poseidon-family hash. A port would rewrite the CIP spend constraints in their gate system and gain their recursive verifier for free.
+## Decision
 
-Cost: a full AIR rewrite, a new proving stack, and a migration of the node verifier. Benefit: recursion is a library feature, not a custom circuit. Risk: the existing Winterfell proofs, the pinned proof options, and the node integration are thrown away.
+Stay on Winterfell. Recursion is not a launch requirement until an owner says otherwise. The interim is:
 
-### B. Custom Winterfell verifier AIR
+1. Verify each spend with `verify_bytes`.
+2. Fold the verified digests with domain-separated Poseidon2 (`aggregate.rs`).
+3. Do not call the fold a recursive proof.
 
-A genuine recursive verifier constrains the inner Winterfell verification: FRI layer checks, Merkle openings, the fold, the final degree check, and DEEP/OOD consistency. This stays in the current stack.
-
-Cost: a large new AIR, estimated in the hundreds of thousands of constraints, plus a cross-check against Winterfell's native verifier. Benefit: no stack migration. Risk: long implementation, easy to get the FRI relation subtly wrong.
-
-## Recommendation
-
-**Stay on Winterfell and do not schedule a full verifier circuit yet.** The current Poseidon2 fold plus per-spend `verify_bytes` is the correct interim. A Plonky port is only justified if recursion becomes a launch requirement and the Winterfell verifier AIR is estimated to cost more than the migration. That estimate does not exist yet.
+A Plonky port is justified only if recursion becomes required and a Winterfell verifier AIR is estimated to cost more than the migration. That estimate does not exist.
 
 ## Prototype
 
-No prototype is included. A minimal "verify one proof inside another" loop requires either a Plonky dependency or a partial FRI circuit. Neither is small enough to land as a spike without becoming the production verifier by accident. The comparison above is the gate artifact.
+The fold in `aggregate.rs` is the prototype. It rejects an empty set, rejects a bad spend, and changes when digests are reordered. It does not re-execute FRI.
 
 ## Gate
 
-Comparison written. Path chosen: stay on Winterfell, recursion remains out of launch scope until an owner decision. No further recursion work is scheduled.
+Comparison written. Path chosen. No further recursion work is scheduled.

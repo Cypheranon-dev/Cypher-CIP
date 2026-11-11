@@ -1,33 +1,24 @@
 # Phase 1 — Fixed MAX_DEPTH circuit
 
-**Status: design decided. Gate not met.**
+**Status: membership gadget complete. Full AIR integration pending.**
 
-## Decision
+## Structure
 
-Option B. One shared note tree, one circuit, one verifying key. `MAX_DEPTH = 20`. Shallower spends pad unused levels with a selector column. Depth 3, 4, and 8 are the same AIR with different amounts of padding.
+One circuit shape. `MAX_DEPTH = 20`. A spend of a shallower tree pads unused levels with a selector. Real levels mix a sibling. Padding levels are the identity on the accumulator. Selectors must be 1 then 0, in order.
 
-## Layout
+## Implemented
 
-`layout.rs` computes sizes for MAX_DEPTH = 20:
+`crypto/cip/src/padded_path.rs`:
 
-- pad slot 24, trace length 1024
-- root / nullifier / output / event rows follow the max-depth slots
-- sibling and range columns scale to 20 levels
-- selector column and flag column follow
+- `step` applies one level under the selector.
+- `walk` checks selector order and returns the root.
+- `pad` builds a MAX_DEPTH path from a shorter real path.
+- Tests pass for depth 3, 4, and 8, and reject an unordered selector.
 
-## Remaining integration
+## Production AIR
 
-The AIR in `lib.rs` and the step flags in `poseidon2.rs` are still the depth-3 circuit. Wiring MAX_DEPTH through requires, in order:
-
-1. Size the boundary flag array and the periodic boundary columns to the pad slot.
-2. Size sibling and bit columns to MAX_DEPTH.
-3. Add the selector column. Selector 1 mixes the sibling; selector 0 is the identity on the accumulator.
-4. Constrain that selectors are 1 for the first `d` levels and 0 after, in order, where `d` is public.
-5. Confirm a depth-3 witness still verifies on the padded circuit.
-6. Confirm depth-4 and depth-8 witnesses verify on the same circuit.
-
-An integration attempt that resized the boundary array without resizing the periodic columns panicked. It was reverted so depth-3 proofs still pass.
+The spend AIR in `lib.rs` is still the depth-3 circuit. It is unchanged and still proves. Replacing its Merkle path with `padded_path` is the remaining integration. Until that lands, the anonymity set in consensus is 8 leaves.
 
 ## Gate
 
-Not met. Phase 2 comparison is written separately and does not depend on this gate.
+Membership gadget: met. Consensus circuit: not switched. Do not claim a 20-level anonymity set in production until the AIR uses this path and a depth-3 proof still verifies.

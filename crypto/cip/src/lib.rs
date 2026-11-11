@@ -25,6 +25,7 @@ pub mod dilithium_bind;
 pub mod mldsa;
 pub mod poseidon2;
 pub mod layout;
+pub mod padded_path;
 pub mod recursive;
 pub mod v2;
 
@@ -42,7 +43,7 @@ use winterfell::{
     TransitionConstraintDegree,
 };
 
-const TRACE_LEN: usize = layout::trace_len(DEPTH);
+const TRACE_LEN: usize = 256;
 const DEPTH: usize = 3;
 pub const LEAVES: usize = 8;
 const AMOUNT_BITS: usize = 32;
@@ -58,15 +59,15 @@ const PAYLOAD: usize = 14;
 const RHO: usize = 15;
 const CHAIN: usize = 16;
 const BIT: usize = layout::BIT;
-const SIB: usize = layout::sib_start(DEPTH);
-const RANGE: usize = layout::range_start(DEPTH);
-const WIDTH: usize = layout::width(DEPTH);
-const FLAG: usize = layout::flag_col(DEPTH);
+const SIB: usize = 23;
+const RANGE: usize = 35;
+const WIDTH: usize = 132;
+const FLAG: usize = 131;
 
-const ROOT_ROW: usize = layout::root_row(DEPTH);
-const NULL_ROW: usize = layout::null_row(DEPTH);
-const OUT_ROW: usize = layout::out_row(DEPTH);
-const EVENT_ROW: usize = layout::event_row(DEPTH);
+const ROOT_ROW: usize = 3 * 32 + 31;
+const NULL_ROW: usize = 4 * 32 + 31;
+const OUT_ROW: usize = 5 * 32 + 31;
+const EVENT_ROW: usize = 6 * 32 + 31;
 
 const P_LINEAR: usize = 0;
 const P_FULL: usize = 1;
