@@ -22,14 +22,15 @@
 
 pub mod aggregate;
 pub mod dilithium_bind;
+pub mod layout;
 pub mod mldsa;
+pub mod padded_path;
 pub mod poseidon2;
 pub mod recursive;
 pub mod v2;
 
 use poseidon2::{
     full_round, linear_layer, partial_round, step_flags, DOM_EVENT, DOM_NOTE, DOM_NULL, PAD_SLOT,
-    SLOT_ROWS,
 };
 use winterfell::crypto::{hashers::Rp64_256, DefaultRandomCoin, ElementHasher, MerkleTree};
 use winterfell::math::{fields::f64::BaseElement, FieldElement, ToElements};
@@ -56,16 +57,16 @@ const HEIGHT: usize = 13;
 const PAYLOAD: usize = 14;
 const RHO: usize = 15;
 const CHAIN: usize = 16;
-const BIT: usize = 20;
+const BIT: usize = layout::BIT;
 const SIB: usize = 23;
 const RANGE: usize = 35;
 const WIDTH: usize = 132;
 const FLAG: usize = 131;
 
-const ROOT_ROW: usize = 3 * SLOT_ROWS + (SLOT_ROWS - 1);
-const NULL_ROW: usize = 4 * SLOT_ROWS + (SLOT_ROWS - 1);
-const OUT_ROW: usize = 5 * SLOT_ROWS + (SLOT_ROWS - 1);
-const EVENT_ROW: usize = 6 * SLOT_ROWS + (SLOT_ROWS - 1);
+const ROOT_ROW: usize = 3 * 32 + 31;
+const NULL_ROW: usize = 4 * 32 + 31;
+const OUT_ROW: usize = 5 * 32 + 31;
+const EVENT_ROW: usize = 6 * 32 + 31;
 
 const P_LINEAR: usize = 0;
 const P_FULL: usize = 1;
