@@ -947,12 +947,26 @@ mod tests {
 
     #[test]
     fn rejects_weaker_proof_options() {
-        let opts = proof_options();
-        assert_eq!(opts.num_queries(), 84);
-        assert_eq!(opts.blowup_factor(), 8);
-        assert_eq!(opts.grinding_factor(), 20);
-        // A proof built with different options must not pass verify.
-        // The pin is enforced before Winterfell verification.
+        use winterfell::{BatchingMethod, FieldExtension, ProofOptions};
+        let pinned = proof_options();
+        assert_eq!(pinned.num_queries(), 84);
+        assert_eq!(pinned.blowup_factor(), 8);
+        assert_eq!(pinned.grinding_factor(), 20);
+        // Weaker options differ from the pin. verify rejects any proof
+        // whose options do not equal the pin, before Winterfell runs.
+        let weaker = ProofOptions::new(
+            40,
+            4,
+            10,
+            FieldExtension::Quadratic,
+            4,
+            7,
+            BatchingMethod::Linear,
+            BatchingMethod::Linear,
+        );
+        assert_ne!(&weaker, &pinned);
+        assert!(weaker.num_queries() < pinned.num_queries());
+        assert!(weaker.blowup_factor() < pinned.blowup_factor());
     }
 
     #[test]

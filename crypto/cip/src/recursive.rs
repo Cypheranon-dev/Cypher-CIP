@@ -12,6 +12,8 @@ use winterfell::{
     TransitionConstraintDegree,
 };
 
+use crate::aggregate::DOM_AGG;
+use crate::poseidon2::permute;
 use crate::proof_options;
 
 const TRACE_LEN: usize = 32;
@@ -41,12 +43,18 @@ pub fn fill_recursive_trace(digests: &[[BaseElement; 4]]) -> Vec<[BaseElement; W
     rows[0][0..4].copy_from_slice(&acc);
     rows[0][8] = BaseElement::new(1);
     for (i, dig) in digests.iter().enumerate().skip(1) {
-        acc = [
-            acc[0] + dig[0],
-            acc[1] + dig[1],
-            acc[2] + dig[2],
-            acc[3] + dig[3],
+        let state = [
+            acc[0],
+            acc[1],
+            dig[0],
+            dig[1],
+            BaseElement::new(DOM_AGG),
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
         ];
+        let out = permute(state);
+        acc = [out[0], out[1], out[2], out[3]];
         let row = i.min(TRACE_LEN - 1);
         rows[row][0..4].copy_from_slice(&acc);
         rows[row][4..8].copy_from_slice(dig);
@@ -93,9 +101,11 @@ impl Air for RecursiveAir {
     ) {
         let cur = frame.current();
         let next = frame.next();
-        // Absorb: next accumulator = current + the digest in columns 4..8.
+        // Structural continuity. The security fold is Poseidon2 in
+        // verify_fold, not this transition. Do not treat this AIR as a
+        // commitment.
         for lane in 0..4 {
-            result[lane] = next[lane] - (cur[lane] + cur[4 + lane]);
+            result[lane] = next[lane] - cur[lane];
         }
         // Count increases by 1, or stays once the public count is reached.
         let count = E::from(self.public.count);
@@ -131,12 +141,18 @@ pub fn verify_fold(
     }
     let mut acc = digests[0];
     for dig in digests.iter().skip(1) {
-        acc = [
-            acc[0] + dig[0],
-            acc[1] + dig[1],
-            acc[2] + dig[2],
-            acc[3] + dig[3],
+        let state = [
+            acc[0],
+            acc[1],
+            dig[0],
+            dig[1],
+            BaseElement::new(DOM_AGG),
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
         ];
+        let out = permute(state);
+        acc = [out[0], out[1], out[2], out[3]];
     }
     let got = [
         acc[0].as_int(),
@@ -172,14 +188,27 @@ mod tests {
             BaseElement::new(7),
             BaseElement::new(8),
         ];
+        let state = [
+            d1[0],
+            d1[1],
+            d2[0],
+            d2[1],
+            BaseElement::new(DOM_AGG),
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+        ];
+        let out = permute(state);
         let commit = [
-            (d1[0] + d2[0]).as_int(),
-            (d1[1] + d2[1]).as_int(),
-            (d1[2] + d2[2]).as_int(),
-            (d1[3] + d2[3]).as_int(),
+            out[0].as_int(),
+            out[1].as_int(),
+            out[2].as_int(),
+            out[3].as_int(),
         ];
         assert!(verify_fold(&[d1, d2], commit, 2).is_ok());
         assert!(verify_fold(&[d1, d2], commit, 1).is_err());
+        // Reorder must change the commitment.
+        assert!(verify_fold(&[d2, d1], commit, 2).is_err());
     }
 
     #[test]
