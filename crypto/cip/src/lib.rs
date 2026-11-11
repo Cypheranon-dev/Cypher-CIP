@@ -965,6 +965,7 @@ mod tests {
         assert_eq!(LEAVES, 8);
     }
 
+    #[test]
     fn rejects_weaker_proof_options() {
         use winterfell::{BatchingMethod, FieldExtension, ProofOptions};
         let pinned = proof_options();
