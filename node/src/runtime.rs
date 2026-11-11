@@ -22,6 +22,8 @@ pub struct Node {
     pub chain: Chain,
     miner_pk: Vec<u8>,
     miner_sk: Vec<u8>,
+    /// Peer address -> score. Negative scores are banned.
+    peer_score: std::collections::HashMap<String, i32>,
     #[allow(dead_code)] // reserved for wallet spend seed; coinbase uses miner pk
     field_sk: u64,
     mempool: Vec<Transfer>,
@@ -43,6 +45,7 @@ impl Node {
             field_sk,
             mempool: Vec::new(),
             peers: Vec::new(),
+            peer_score: std::collections::HashMap::new(),
         })
     }
 
@@ -136,6 +139,7 @@ impl Node {
             field_sk,
             mempool: Vec::new(),
             peers: Vec::new(),
+            peer_score: std::collections::HashMap::new(),
         })
     }
 }
@@ -318,6 +322,28 @@ impl Node {
 
     pub fn peers(&self) -> &[String] {
         &self.peers
+    }
+
+    /// Record a successful interaction. Score is capped at 100.
+    pub fn note_good(&mut self, peer: &str) {
+        let s = self.peer_score.entry(peer.to_string()).or_insert(0);
+        *s = (*s + 1).min(100);
+    }
+
+    /// Record a bad interaction. Below -10 the peer is banned.
+    pub fn note_bad(&mut self, peer: &str) {
+        let s = self.peer_score.entry(peer.to_string()).or_insert(0);
+        *s -= 5;
+    }
+
+    pub fn is_banned(&self, peer: &str) -> bool {
+        self.peer_score.get(peer).copied().unwrap_or(0) < -10
+    }
+
+    /// Connection limit. Rejects if at capacity.
+    pub const MAX_PEERS: usize = 32;
+    pub fn can_accept(&self) -> bool {
+        self.peers.len() < Self::MAX_PEERS
     }
 }
 

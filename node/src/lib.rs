@@ -1117,6 +1117,23 @@ mod tests {
     }
 
     #[test]
+    fn peer_score_bans_after_repeated_bad() {
+        use crate::runtime::Node;
+        use cypher_dilithium::Keypair;
+        let infra = Keypair::dilithium5();
+        let miner = Keypair::dilithium2();
+        let mut node = Node::open(&infra, &miner, 7, [[0; 4]; LEAVES], 0).unwrap();
+        assert!(!node.is_banned("10.0.0.1:9000"));
+        for _ in 0..3 {
+            node.note_bad("10.0.0.1:9000");
+        }
+        assert!(node.is_banned("10.0.0.1:9000"));
+        node.note_good("10.0.0.2:9000");
+        assert!(!node.is_banned("10.0.0.2:9000"));
+        assert!(node.can_accept());
+    }
+
+    #[test]
     fn threshold_rejects_bad_m() {
         let infra = Keypair::dilithium5();
         let mut chain = Chain::open(infra.public, [[0; 4]; LEAVES], 0).unwrap();
