@@ -1,25 +1,28 @@
-//! Depth-parameterized trace layout.
+//! Fixed-depth layout. One circuit, one verifying key.
 //!
-//! For depth 3 these formulas reproduce the current hardcoded rows and
-//! columns exactly. Higher depths extend the same pattern.
+//! MAX_DEPTH is the anonymity-set ceiling. A spend of a shallower tree
+//! pads the unused levels with a selector column. Depth 3, 4, and 8
+//! are the same AIR with different amounts of padding.
 
-/// Rows per Poseidon2 permutation slot.
+/// Ceiling on the note tree. Sized once. Not per proof.
+pub const MAX_DEPTH: usize = 20;
+
+/// Rows per Poseidon2 slot.
 pub const SLOT_ROWS: usize = 32;
 
-/// End row of a slot (where the boundary load is applied).
+/// End row of a slot.
 pub const fn slot_end(slot: usize) -> usize {
     slot * SLOT_ROWS + (SLOT_ROWS - 1)
 }
 
-/// Merkle slots are 0..depth. Root, nullifier, output, event follow.
-/// Pad is the slot after the event.
-pub const fn pad_slot(depth: usize) -> usize {
-    depth + 4
+/// Pad slot follows the max-depth merkle levels plus the four assertion slots.
+pub const fn pad_slot() -> usize {
+    MAX_DEPTH + 4
 }
 
-/// Trace length: next power of two covering pad_slot+1 slots.
-pub const fn trace_len(depth: usize) -> usize {
-    let used = (pad_slot(depth) + 1) * SLOT_ROWS;
+/// Trace length covering the pad slot.
+pub const fn trace_len() -> usize {
+    let used = (pad_slot() + 1) * SLOT_ROWS;
     let mut n = 1usize;
     while n < used {
         n *= 2;
@@ -27,47 +30,43 @@ pub const fn trace_len(depth: usize) -> usize {
     n
 }
 
-/// Root assertion: end of the slot after the last merkle level.
-pub const fn root_row(depth: usize) -> usize {
-    slot_end(depth)
+/// Root assertion row: end of the last real-capable merkle slot.
+pub const fn root_row() -> usize {
+    slot_end(MAX_DEPTH)
 }
 
-/// Nullifier assertion row.
-pub const fn null_row(depth: usize) -> usize {
-    slot_end(depth + 1)
+pub const fn null_row() -> usize {
+    slot_end(MAX_DEPTH + 1)
 }
 
-/// Output assertion row.
-pub const fn out_row(depth: usize) -> usize {
-    slot_end(depth + 2)
+pub const fn out_row() -> usize {
+    slot_end(MAX_DEPTH + 2)
 }
 
-/// Event assertion row.
-pub const fn event_row(depth: usize) -> usize {
-    slot_end(depth + 3)
+pub const fn event_row() -> usize {
+    slot_end(MAX_DEPTH + 3)
 }
 
-/// Bit column start. Fixed; depth bits follow.
 pub const BIT: usize = 20;
 
-/// Sibling column start.
-pub const fn sib_start(depth: usize) -> usize {
-    BIT + depth
+pub const fn sib_start() -> usize {
+    BIT + MAX_DEPTH
 }
 
-/// Range column start.
-pub const fn range_start(depth: usize) -> usize {
-    sib_start(depth) + depth * 4
+pub const fn range_start() -> usize {
+    sib_start() + MAX_DEPTH * 4
 }
 
-/// Flag column.
-pub const fn flag_col(depth: usize) -> usize {
-    range_start(depth) + 96
+pub const fn selector_col() -> usize {
+    range_start() + 96
 }
 
-/// Trace width.
-pub const fn width(depth: usize) -> usize {
-    flag_col(depth) + 1
+pub const fn flag_col() -> usize {
+    selector_col() + 1
+}
+
+pub const fn width() -> usize {
+    flag_col() + 1
 }
 
 #[cfg(test)]
@@ -75,24 +74,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn depth3_matches_current() {
-        assert_eq!(pad_slot(3), 7);
-        assert_eq!(trace_len(3), 256);
-        assert_eq!(root_row(3), 3 * 32 + 31);
-        assert_eq!(null_row(3), 4 * 32 + 31);
-        assert_eq!(out_row(3), 5 * 32 + 31);
-        assert_eq!(event_row(3), 6 * 32 + 31);
-        assert_eq!(sib_start(3), 23);
-        assert_eq!(range_start(3), 35);
-        assert_eq!(flag_col(3), 131);
-        assert_eq!(width(3), 132);
-    }
-
-    #[test]
-    fn higher_depths() {
-        assert_eq!(trace_len(4), 512);
-        assert_eq!(pad_slot(4), 8);
-        assert_eq!(trace_len(8), 512);
-        assert_eq!(pad_slot(8), 12);
+    fn sizes() {
+        assert_eq!(MAX_DEPTH, 20);
+        assert_eq!(pad_slot(), 24);
+        assert_eq!(trace_len(), 1024);
+        assert_eq!(sib_start(), 40);
+        assert!(width() > 132);
     }
 }

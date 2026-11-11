@@ -1,19 +1,33 @@
-# Phase 1 — Depth-parameterized anonymity set
+# Phase 1 — Fixed MAX_DEPTH circuit
 
-## Depth 3: identity confirmed
+**Status: design decided. Gate not met.**
 
-`layout.rs` derives rows and columns from depth. For depth 3 the formulas match the previous hardcoded values:
+## Decision
 
-- pad slot 7, trace length 256
-- root row 127, nullifier 159, output 191, event 223
-- bit column 20, sibling start 23, range start 35, width 132
+Option B. One shared note tree, one circuit, one verifying key. `MAX_DEPTH = 20`. Shallower spends pad unused levels with a selector column. Depth 3, 4, and 8 are the same AIR with different amounts of padding.
 
-The fill loop, step flags, and boundary assertions all source these from `layout.rs`. A golden trace hash (`17909019558313341407`) is unchanged, and `accepts_valid_witness_and_rejects_wrong_nullifier` passes.
+## Layout
 
-## Depth 4 and 8: not yet
+`layout.rs` computes sizes for MAX_DEPTH = 20:
 
-The layout formulas give sizes for depth 4 (trace 512, pad 8) and depth 8 (trace 512, pad 12). The AIR is still monomorphic at depth 3: the boundary array is `[E; 7]`, step flags carry `[bool; 7]`, and column widths are fixed at compile time. Proofs at depth 4 or 8 require the AIR, step flags, and column layout to be generic over depth. That is not done.
+- pad slot 24, trace length 1024
+- root / nullifier / output / event rows follow the max-depth slots
+- sibling and range columns scale to 20 levels
+- selector column and flag column follow
+
+## Remaining integration
+
+The AIR in `lib.rs` and the step flags in `poseidon2.rs` are still the depth-3 circuit. Wiring MAX_DEPTH through requires, in order:
+
+1. Size the boundary flag array and the periodic boundary columns to the pad slot.
+2. Size sibling and bit columns to MAX_DEPTH.
+3. Add the selector column. Selector 1 mixes the sibling; selector 0 is the identity on the accumulator.
+4. Constrain that selectors are 1 for the first `d` levels and 0 after, in order, where `d` is public.
+5. Confirm a depth-3 witness still verifies on the padded circuit.
+6. Confirm depth-4 and depth-8 witnesses verify on the same circuit.
+
+An integration attempt that resized the boundary array without resizing the periodic columns panicked. It was reverted so depth-3 proofs still pass.
 
 ## Gate
 
-Depth 3 is green and identity-checked. Depth 4 and depth 8 are not. Phase 2 is not started.
+Not met. Phase 2 comparison is written separately and does not depend on this gate.
