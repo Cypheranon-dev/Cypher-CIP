@@ -1,24 +1,16 @@
-# Phase 1 — Fixed MAX_DEPTH circuit
+# Phase 1 — Wire padded_path into the production AIR
 
-**Status: membership gadget complete. Full AIR integration pending.**
+**Status: not integrated. Gate not met.**
 
-## Structure
+## Why it stopped
 
-One circuit shape. `MAX_DEPTH = 20`. A spend of a shallower tree pads unused levels with a selector. Real levels mix a sibling. Padding levels are the identity on the accumulator. Selectors must be 1 then 0, in order.
+`padded_path::step` mixes with a linear combination. The production spend AIR mixes with Poseidon2 through the boundary loads and the transition. Replacing the fill with `padded_path` changes the membership computation. The depth-3 production trace hash is `17909019558313341407`. A fill that calls `padded_path::step` will not match it.
 
-## Implemented
+## What exists
 
-`crypto/cip/src/padded_path.rs`:
-
-- `step` applies one level under the selector.
-- `walk` checks selector order and returns the root.
-- `pad` builds a MAX_DEPTH path from a shorter real path.
-- Tests pass for depth 3, 4, and 8, and reject an unordered selector.
-
-## Production AIR
-
-The spend AIR in `lib.rs` is still the depth-3 circuit. It is unchanged and still proves. Replacing its Merkle path with `padded_path` is the remaining integration. Until that lands, the anonymity set in consensus is 8 leaves.
+- `padded_path.rs`: standalone selector-padded walk. Tests pass at depth 3, 4, 8. Not called by `lib.rs`.
+- Production AIR: depth 3, Poseidon2 path, unchanged.
 
 ## Gate
 
-Membership gadget: met. Consensus circuit: not switched. Do not claim a 20-level anonymity set in production until the AIR uses this path and a depth-3 proof still verifies.
+Not met. Depth-3 production proof still passes on the existing AIR. Depth 4 and 8 are not proven through that AIR.
