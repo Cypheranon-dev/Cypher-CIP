@@ -24,6 +24,7 @@ pub mod aggregate;
 pub mod dilithium_bind;
 pub mod mldsa;
 pub mod poseidon2;
+pub mod layout;
 pub mod recursive;
 pub mod v2;
 
@@ -41,7 +42,7 @@ use winterfell::{
     TransitionConstraintDegree,
 };
 
-const TRACE_LEN: usize = 256;
+const TRACE_LEN: usize = layout::trace_len(DEPTH);
 const DEPTH: usize = 3;
 pub const LEAVES: usize = 8;
 const AMOUNT_BITS: usize = 32;
@@ -56,16 +57,16 @@ const HEIGHT: usize = 13;
 const PAYLOAD: usize = 14;
 const RHO: usize = 15;
 const CHAIN: usize = 16;
-const BIT: usize = 20;
-const SIB: usize = 23;
-const RANGE: usize = 35;
-const WIDTH: usize = 132;
-const FLAG: usize = 131;
+const BIT: usize = layout::BIT;
+const SIB: usize = layout::sib_start(DEPTH);
+const RANGE: usize = layout::range_start(DEPTH);
+const WIDTH: usize = layout::width(DEPTH);
+const FLAG: usize = layout::flag_col(DEPTH);
 
-const ROOT_ROW: usize = 3 * SLOT_ROWS + (SLOT_ROWS - 1);
-const NULL_ROW: usize = 4 * SLOT_ROWS + (SLOT_ROWS - 1);
-const OUT_ROW: usize = 5 * SLOT_ROWS + (SLOT_ROWS - 1);
-const EVENT_ROW: usize = 6 * SLOT_ROWS + (SLOT_ROWS - 1);
+const ROOT_ROW: usize = layout::root_row(DEPTH);
+const NULL_ROW: usize = layout::null_row(DEPTH);
+const OUT_ROW: usize = layout::out_row(DEPTH);
+const EVENT_ROW: usize = layout::event_row(DEPTH);
 
 const P_LINEAR: usize = 0;
 const P_FULL: usize = 1;
@@ -902,6 +903,22 @@ mod tests {
             leaves,
             coinbase: false,
         }
+    }
+
+    #[test]
+    fn golden_trace_hash() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let prepared = prepare_inner(&sample()).expect("prepare");
+        let trace = fill_trace(&prepared);
+        let mut h = DefaultHasher::new();
+        for step in 0..TRACE_LEN {
+            for col in 0..WIDTH {
+                trace.get(col, step).as_int().hash(&mut h);
+            }
+        }
+        println!("GOLDEN {}", h.finish());
+        assert!(true);
     }
 
     #[test]

@@ -6,6 +6,7 @@
 //! This module is intentionally self-contained so the AIR and native code can
 //! share the same permutation without depending on a second field type.
 
+use crate::layout;
 use winterfell::math::fields::f64::BaseElement;
 use winterfell::math::FieldElement;
 
@@ -20,7 +21,7 @@ pub const DOM_EVENT: u64 = 4;
 /// Rows per Poseidon2 permutation, including the input row.
 pub const SLOT_ROWS: usize = 32;
 /// First trace slot that is padding, not a permutation.
-pub const PAD_SLOT: usize = 7;
+pub const PAD_SLOT: usize = layout::pad_slot(3);
 
 const RC_INITIAL: [[u64; 8]; 4] = [
     [
