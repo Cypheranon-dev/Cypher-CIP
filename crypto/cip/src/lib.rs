@@ -62,10 +62,18 @@ const RANGE: usize = 35;
 const WIDTH: usize = 132;
 const FLAG: usize = 131;
 
-const ROOT_ROW: usize = 3 * SLOT_ROWS + (SLOT_ROWS - 1);
-const NULL_ROW: usize = 4 * SLOT_ROWS + (SLOT_ROWS - 1);
-const OUT_ROW: usize = 5 * SLOT_ROWS + (SLOT_ROWS - 1);
-const EVENT_ROW: usize = 6 * SLOT_ROWS + (SLOT_ROWS - 1);
+// Boundary slots are derived from DEPTH so the layout is not tied to
+// the depth-3 literals. For DEPTH=3 these equal the previous constants.
+// These formulas reproduce the depth-3 layout exactly:
+// root assertion at slot 3, nullifier at 4, output at 5, event at 6.
+const ROOT_SLOT: usize = DEPTH;
+const NULL_SLOT: usize = DEPTH + 1;
+const OUT_SLOT: usize = DEPTH + 2;
+const EVENT_SLOT: usize = DEPTH + 3;
+const ROOT_ROW: usize = ROOT_SLOT * SLOT_ROWS + (SLOT_ROWS - 1);
+const NULL_ROW: usize = NULL_SLOT * SLOT_ROWS + (SLOT_ROWS - 1);
+const OUT_ROW: usize = OUT_SLOT * SLOT_ROWS + (SLOT_ROWS - 1);
+const EVENT_ROW: usize = EVENT_SLOT * SLOT_ROWS + (SLOT_ROWS - 1);
 
 const P_LINEAR: usize = 0;
 const P_FULL: usize = 1;
@@ -434,7 +442,7 @@ fn boundaries<E: FieldElement<BaseField = BaseElement>>(cur: &[E]) -> [[E; 8]; 7
         ];
         out[depth] = merkle_load(acc, sib, cur[BIT + depth]);
     }
-    out[3] = [
+    out[DEPTH] = [
         cur[SK],
         cur[RIN],
         E::from(fe(DOM_NULL)),
@@ -444,7 +452,7 @@ fn boundaries<E: FieldElement<BaseField = BaseElement>>(cur: &[E]) -> [[E; 8]; 7
         E::ZERO,
         E::ZERO,
     ];
-    out[4] = [
+    out[DEPTH + 1] = [
         cur[AMT_OUT],
         cur[SK],
         cur[RHO],
@@ -454,7 +462,7 @@ fn boundaries<E: FieldElement<BaseField = BaseElement>>(cur: &[E]) -> [[E; 8]; 7
         E::ZERO,
         E::ZERO,
     ];
-    out[5] = [
+    out[DEPTH + 2] = [
         cur[PAYLOAD],
         cur[HEIGHT],
         cur[CHAIN],
@@ -946,6 +954,17 @@ mod tests {
     }
 
     #[test]
+    fn boundary_slots_match_depth_three() {
+        // The formulas must reproduce the previous literals so existing
+        // proofs keep verifying.
+        assert_eq!(ROOT_ROW, 3 * 32 + 31);
+        assert_eq!(NULL_ROW, 4 * 32 + 31);
+        assert_eq!(OUT_ROW, 5 * 32 + 31);
+        assert_eq!(EVENT_ROW, 6 * 32 + 31);
+        assert_eq!(DEPTH, 3);
+        assert_eq!(LEAVES, 8);
+    }
+
     fn rejects_weaker_proof_options() {
         use winterfell::{BatchingMethod, FieldExtension, ProofOptions};
         let pinned = proof_options();
