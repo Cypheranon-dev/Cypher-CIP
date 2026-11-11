@@ -24,6 +24,7 @@ pub mod aggregate;
 pub mod dilithium_bind;
 pub mod mldsa;
 pub mod poseidon2;
+pub mod layout;
 pub mod recursive;
 pub mod v2;
 
