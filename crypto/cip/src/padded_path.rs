@@ -37,7 +37,10 @@ fn mix(acc: [BaseElement; 4], sib: [BaseElement; 4], bit: BaseElement) -> [BaseE
 }
 
 /// Walk a full MAX_DEPTH path. Selectors must be 1 then 0, in order.
-pub fn walk(leaf: [BaseElement; 4], levels: &[Level; MAX_DEPTH]) -> Result<[BaseElement; 4], &'static str> {
+pub fn walk(
+    leaf: [BaseElement; 4],
+    levels: &[Level; MAX_DEPTH],
+) -> Result<[BaseElement; 4], &'static str> {
     let mut seen_pad = false;
     let mut acc = leaf;
     for level in levels {

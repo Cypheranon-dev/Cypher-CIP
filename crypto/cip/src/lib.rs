@@ -22,16 +22,15 @@
 
 pub mod aggregate;
 pub mod dilithium_bind;
-pub mod mldsa;
-pub mod poseidon2;
 pub mod layout;
+pub mod mldsa;
 pub mod padded_path;
+pub mod poseidon2;
 pub mod recursive;
 pub mod v2;
 
 use poseidon2::{
     full_round, linear_layer, partial_round, step_flags, DOM_EVENT, DOM_NOTE, DOM_NULL, PAD_SLOT,
-    SLOT_ROWS,
 };
 use winterfell::crypto::{hashers::Rp64_256, DefaultRandomCoin, ElementHasher, MerkleTree};
 use winterfell::math::{fields::f64::BaseElement, FieldElement, ToElements};
@@ -904,22 +903,6 @@ mod tests {
             leaves,
             coinbase: false,
         }
-    }
-
-    #[test]
-    fn golden_trace_hash() {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-        let prepared = prepare_inner(&sample()).expect("prepare");
-        let trace = fill_trace(&prepared);
-        let mut h = DefaultHasher::new();
-        for step in 0..TRACE_LEN {
-            for col in 0..WIDTH {
-                trace.get(col, step).as_int().hash(&mut h);
-            }
-        }
-        println!("GOLDEN {}", h.finish());
-        assert!(true);
     }
 
     #[test]

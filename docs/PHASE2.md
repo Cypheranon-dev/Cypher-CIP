@@ -1,28 +1,21 @@
-# Phase 2 — Recursion
+# Phase 2 — Fold AIR
 
-**Status: path chosen. Interim is the Poseidon2 fold. No verifier circuit.**
+**Status: working. Not a FRI verifier.**
 
-## Comparison
+## What it does
 
-| Path | Cost | Outcome |
-| --- | --- | --- |
-| Port AIR to Plonky2/3 | Full rewrite, new stack, discard Winterfell proofs and pinned options | Recursion becomes a library feature |
-| Custom Winterfell verifier AIR | Hundreds of thousands of constraints, FRI relation must be exact | Stays on current stack |
+`recursive.rs` proves an ordered fold:
 
-## Decision
+- Trace holds the accumulator, the current digest, and a count.
+- Assertions bind the final commitment and the count.
+- `prove_fold` / `verify_fold_proof` generate and check a Winterfell proof.
+- `verify_fold` checks the Poseidon2 absorb natively. The node calls this before accepting the proof.
 
-Stay on Winterfell. Recursion is not a launch requirement until an owner says otherwise. The interim is:
+## What it does not do
 
-1. Verify each spend with `verify_bytes`.
-2. Fold the verified digests with domain-separated Poseidon2 (`aggregate.rs`).
-3. Do not call the fold a recursive proof.
+It does not re-execute FRI or attest that the digests came from valid spend proofs. The node still calls `verify_bytes` on each spend. Reordering digests changes the commitment.
 
-A Plonky port is justified only if recursion becomes required and a Winterfell verifier AIR is estimated to cost more than the migration. That estimate does not exist.
+## Tests
 
-## Prototype
-
-The fold in `aggregate.rs` is the prototype. It rejects an empty set, rejects a bad spend, and changes when digests are reordered. It does not re-execute FRI.
-
-## Gate
-
-Comparison written. Path chosen. No further recursion work is scheduled.
+- `fold_roundtrip_and_reorder` — Poseidon2 fold matches, reorder fails.
+- `prove_and_verify_fold` — Winterfell proof generates and verifies.
