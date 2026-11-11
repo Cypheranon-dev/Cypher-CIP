@@ -183,6 +183,36 @@ pub fn exchange(stream: &mut TcpStream, chain: &mut Chain) -> Result<(), String>
     Ok(())
 }
 
+/// Parse and verify a signed block announcement.
+/// Body: block_id (32) || sig_len (u32) || sig || blocks.
+/// Rejects mismatched id, bad signature, or empty payload.
+/// Does not apply the block. The caller must call chain.consider.
+pub fn validate_announce(payload: &[u8], miner_pk: &[u8]) -> Result<crate::Block, String> {
+    use cypher_dilithium::verify2;
+    if payload.len() < 36 {
+        return Err("announce short".into());
+    }
+    let id: [u8; 32] = payload[..32].try_into().unwrap();
+    let sig_len = u32::from_le_bytes(payload[32..36].try_into().unwrap()) as usize;
+    if sig_len > 4096 || 36 + sig_len > payload.len() {
+        return Err("announce sig".into());
+    }
+    let sig = &payload[36..36 + sig_len];
+    if !verify2(miner_pk, &id, sig) {
+        return Err("announce signature".into());
+    }
+    let mut rest = wire::Input::new(&payload[36 + sig_len..]);
+    let blocks = rest.blocks().map_err(|e| e.to_string())?;
+    if blocks.len() != 1 {
+        return Err("announce count".into());
+    }
+    let block = blocks.into_iter().next().unwrap();
+    if crate::block_id(&block) != id {
+        return Err("announce id".into());
+    }
+    Ok(block)
+}
+
 /// Serve one connection. Answer a request for the blocks after `from`.
 pub fn serve_one(stream: &mut TcpStream, chain: &Chain) -> Result<(), String> {
     stream
@@ -203,7 +233,24 @@ pub fn serve_one(stream: &mut TcpStream, chain: &Chain) -> Result<(), String> {
     if remote_height < chain.height() {
         let (tag, payload) = recv(stream)?;
         if tag == ANNOUNCE {
-            // Signed block push. Validate and return. Not a gossip mesh.
+            // Structure and id check. Signature verification requires the
+            // miner key, which the caller supplies via validate_announce.
+            if payload.len() < 36 {
+                return Err("announce short".into());
+            }
+            let id: [u8; 32] = payload[..32].try_into().map_err(|_| "announce id")?;
+            let sig_len = u32::from_le_bytes(payload[32..36].try_into().unwrap()) as usize;
+            if sig_len == 0 || sig_len > 4096 || 36 + sig_len > payload.len() {
+                return Err("announce sig".into());
+            }
+            let mut rest = wire::Input::new(&payload[36 + sig_len..]);
+            let blocks = rest.blocks().map_err(|e| e.to_string())?;
+            if blocks.len() != 1 {
+                return Err("announce count".into());
+            }
+            if crate::block_id(&blocks[0]) != id {
+                return Err("announce id mismatch".into());
+            }
             return Ok(());
         }
         if tag != GET_BLOCKS {
