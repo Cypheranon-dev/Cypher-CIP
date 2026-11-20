@@ -1,8 +1,7 @@
-//! Fold AIR. One Winterfell proof attests an ordered Poseidon2 absorb.
+//! Fold helpers. The AIR transition is identically zero and is disabled.
 //!
-//! Not a FRI verifier. The node still calls `verify_bytes` on each spend.
-//! This circuit proves the fold itself: ordered, domain-separated, and
-//! bound to a public commitment and count.
+//! Not a FRI verifier. Not a constrained fold. Use `verify_fold` for the
+//! native Poseidon2 check. The node still calls `verify_bytes` per spend.
 
 use winterfell::crypto::{hashers::Rp64_256, DefaultRandomCoin, MerkleTree};
 use winterfell::math::fields::f64::BaseElement;
@@ -207,16 +206,10 @@ impl Prover for RecursiveProver {
     }
 }
 
-/// Prove a fold. Returns the proof and the public commitment.
-pub fn prove_fold(digests: &[[BaseElement; 4]]) -> Result<(Proof, RecursivePublic), &'static str> {
-    if digests.is_empty() || digests.len() > TRACE_LEN {
-        return Err("count");
-    }
-    let prover = RecursiveProver::new(digests.to_vec());
-    let trace = fill_recursive_trace(digests);
-    let public = prover.get_pub_inputs(&trace);
-    let proof = prover.prove(trace).map_err(|_| "prove")?;
-    Ok((proof, public))
+/// Disabled. The AIR transition is identically zero, so a proof does not
+/// attest the fold. Use `verify_fold` for the native check.
+pub fn prove_fold(_digests: &[[BaseElement; 4]]) -> Result<(Proof, RecursivePublic), &'static str> {
+    Err("fold AIR disabled: transition constraints are zero")
 }
 
 /// Verify a fold proof against its public inputs.
@@ -290,9 +283,8 @@ mod tests {
     }
 
     #[test]
-    fn prove_and_verify_fold() {
+    fn prove_fold_is_disabled() {
         let digests = [d(1), d(5), d(9)];
-        let (proof, public) = prove_fold(&digests).expect("prove");
-        verify_fold_proof(proof, public).expect("verify");
+        assert!(prove_fold(&digests).is_err());
     }
 }
