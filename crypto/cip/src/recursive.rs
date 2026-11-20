@@ -138,6 +138,7 @@ pub struct RecursiveProver {
     _digests: Vec<[BaseElement; 4]>,
 }
 
+#[allow(dead_code)]
 impl RecursiveProver {
     fn new(digests: Vec<[BaseElement; 4]>) -> Self {
         Self {
