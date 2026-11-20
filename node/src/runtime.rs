@@ -217,8 +217,9 @@ pub fn validate_announce(payload: &[u8], miner_pk: &[u8]) -> Result<crate::Block
     Ok(block)
 }
 
-/// Serve one connection. Answer a request for the blocks after `from`.
-pub fn serve_one(stream: &mut TcpStream, chain: &Chain) -> Result<(), String> {
+/// Serve one connection. Answer a request for the blocks after `from`,
+/// or apply one signed announcement that extends this chain.
+pub fn serve_one(stream: &mut TcpStream, chain: &mut Chain) -> Result<(), String> {
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .map_err(|err| err.to_string())?;
@@ -234,28 +235,17 @@ pub fn serve_one(stream: &mut TcpStream, chain: &Chain) -> Result<(), String> {
     let remote_height = hello.u64().map_err(|err| err.to_string())?;
     let _remote_work = hello.u128().map_err(|err| err.to_string())?;
     send_hello(stream, chain)?;
+    if remote_height > chain.height() {
+        let (tag, payload) = recv(stream)?;
+        if tag != ANNOUNCE {
+            return Err("expected announce".into());
+        }
+        return apply_announce(chain, &payload);
+    }
     if remote_height < chain.height() {
         let (tag, payload) = recv(stream)?;
         if tag == ANNOUNCE {
-            // Structure and id check. Signature verification requires the
-            // miner key, which the caller supplies via validate_announce.
-            if payload.len() < 36 {
-                return Err("announce short".into());
-            }
-            let id: [u8; 32] = payload[..32].try_into().map_err(|_| "announce id")?;
-            let sig_len = u32::from_le_bytes(payload[32..36].try_into().unwrap()) as usize;
-            if sig_len == 0 || sig_len > 4096 || 36 + sig_len > payload.len() {
-                return Err("announce sig".into());
-            }
-            let mut rest = wire::Input::new(&payload[36 + sig_len..]);
-            let blocks = rest.blocks().map_err(|e| e.to_string())?;
-            if blocks.len() != 1 {
-                return Err("announce count".into());
-            }
-            if crate::block_id(&blocks[0]) != id {
-                return Err("announce id mismatch".into());
-            }
-            return Ok(());
+            return apply_announce(chain, &payload);
         }
         if tag != GET_BLOCKS {
             return Err("expected getblocks".into());
@@ -269,6 +259,37 @@ pub fn serve_one(stream: &mut TcpStream, chain: &Chain) -> Result<(), String> {
         };
         wire::write_blocks(&mut body, slice);
         send(stream, BLOCKS, &body)?;
+    }
+    Ok(())
+}
+
+fn apply_announce(chain: &mut Chain, payload: &[u8]) -> Result<(), String> {
+    if payload.len() < 36 {
+        return Err("announce short".into());
+    }
+    let id: [u8; 32] = payload[..32].try_into().map_err(|_| "announce id")?;
+    let sig_len = u32::from_le_bytes(payload[32..36].try_into().unwrap()) as usize;
+    if sig_len == 0 || sig_len > 4096 || 36 + sig_len > payload.len() {
+        return Err("announce sig".into());
+    }
+    let mut rest = wire::Input::new(&payload[36 + sig_len..]);
+    let blocks = rest.blocks().map_err(|e| e.to_string())?;
+    if blocks.len() != 1 {
+        return Err("announce count".into());
+    }
+    let block = blocks.into_iter().next().unwrap();
+    if crate::block_id(&block) != id {
+        return Err("announce id mismatch".into());
+    }
+    validate_announce(payload, &block.coinbase_pk)?;
+    if block.prev == chain.tip() {
+        chain.append(block).map_err(|err| err.to_string())?;
+        return Ok(());
+    }
+    let mut next = chain.blocks().to_vec();
+    next.push(block);
+    if !chain.consider(next).map_err(|err| err.to_string())? {
+        return Err("announce rejected".into());
     }
     Ok(())
 }
@@ -365,16 +386,29 @@ impl Node {
         wire::write_blocks(&mut body, std::slice::from_ref(block));
         let mut results = Vec::new();
         for peer in &self.peers {
-            match TcpStream::connect_timeout(
-                &peer
-                    .parse()
-                    .unwrap_or_else(|_| "127.0.0.1:1".parse().unwrap()),
-                std::time::Duration::from_secs(2),
-            ) {
-                Ok(mut stream) => match send(&mut stream, 0x05, &body) {
-                    Ok(()) => results.push((peer.clone(), "sent".into())),
-                    Err(err) => results.push((peer.clone(), err)),
-                },
+            let parsed = match peer.parse::<std::net::SocketAddr>() {
+                Ok(addr) => addr,
+                Err(err) => {
+                    results.push((peer.clone(), err.to_string()));
+                    continue;
+                }
+            };
+            match TcpStream::connect_timeout(&parsed, std::time::Duration::from_secs(2)) {
+                Ok(mut stream) => {
+                    let pushed = send_hello(&mut stream, &self.chain)
+                        .and_then(|_| recv(&mut stream))
+                        .and_then(|(tag, payload)| {
+                            if tag != HELLO {
+                                return Err("expected hello".into());
+                            }
+                            check_network(&mut Input::new(&payload))?;
+                            send(&mut stream, ANNOUNCE, &body)
+                        });
+                    match pushed {
+                        Ok(()) => results.push((peer.clone(), "sent".into())),
+                        Err(err) => results.push((peer.clone(), err)),
+                    }
+                }
                 Err(err) => results.push((peer.clone(), err.to_string())),
             }
         }

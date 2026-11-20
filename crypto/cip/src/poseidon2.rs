@@ -273,6 +273,38 @@ pub fn step_flags(step: usize) -> StepFlags {
     flags
 }
 
+/// One row of a 32-row Poseidon2 slot. `local` is 0..32.
+/// `boundary[0]` marks the output row (local 31). Round flags match `permute`.
+pub fn slot_step(local: usize) -> StepFlags {
+    let mut flags = StepFlags {
+        linear: false,
+        full: false,
+        partial: false,
+        pad: false,
+        row0: false,
+        boundary: [false; 7],
+        rc: [0; 8],
+    };
+    match local {
+        0 => flags.linear = true,
+        1..=4 => {
+            flags.full = true;
+            flags.rc = RC_INITIAL[local - 1];
+        }
+        5..=26 => {
+            flags.partial = true;
+            flags.rc[0] = RC_INTERNAL[local - 5];
+        }
+        27..=30 => {
+            flags.full = true;
+            flags.rc = RC_FINAL[local - 27];
+        }
+        31 => flags.boundary[0] = true,
+        _ => panic!("slot row {local}"),
+    }
+    flags
+}
+
 /// Apply the canonical width-8 Goldilocks Poseidon2 permutation.
 pub fn permute(state: [BaseElement; 8]) -> [BaseElement; 8] {
     let mut state = linear_layer(state);

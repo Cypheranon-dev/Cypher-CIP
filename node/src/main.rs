@@ -139,7 +139,7 @@ fn run(
         );
         for _ in 0..serve {
             let (mut stream, _) = listener.accept().map_err(|err| err.to_string())?;
-            runtime::serve_one(&mut stream, &node.chain)?;
+            runtime::serve_one(&mut stream, &mut node.chain)?;
         }
     }
     Ok(())
