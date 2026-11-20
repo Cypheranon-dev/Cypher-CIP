@@ -9,6 +9,11 @@ use winterfell::math::FieldElement;
 
 use crate::layout::MAX_DEPTH;
 
+/// Lite degree-2 routing AIR. Not this module's linear walk, and not the
+/// production spend. See docs/LITE.md.
+#[path = "lite.rs"]
+pub mod lite;
+
 /// One level of a padded path.
 #[derive(Clone, Copy, Debug)]
 pub struct Level {
