@@ -1,8 +1,10 @@
 //! Fold AIR. One Winterfell proof attests an ordered Poseidon2 absorb.
 //!
 //! Not a FRI verifier. The node still calls `verify_bytes` on each spend.
-//! This circuit proves the fold itself: ordered, domain-separated, and
-//! bound to a public commitment and count.
+//! The AIR constrains that the count column increases by at most 1 and
+//! that the final commitment matches the public input. The Poseidon2
+//! absorb is checked natively by `verify_fold`. This is not a recursive
+//! verifier and does not prove the absorb inside the circuit.
 
 use winterfell::crypto::{hashers::Rp64_256, DefaultRandomCoin, MerkleTree};
 use winterfell::math::fields::f64::BaseElement;
@@ -96,7 +98,8 @@ impl Air for RecursiveAir {
     type PublicInputs = RecursivePublic;
 
     fn new(trace_info: TraceInfo, public: Self::PublicInputs, options: ProofOptions) -> Self {
-        let degrees = vec![TransitionConstraintDegree::new(1); 9];
+        let mut degrees = vec![TransitionConstraintDegree::new(2)];
+        degrees.extend(vec![TransitionConstraintDegree::new(1); 8]);
         Self {
             context: AirContext::new(trace_info, degrees, N_ASSERTIONS, options),
             public,
@@ -113,10 +116,15 @@ impl Air for RecursiveAir {
         _periodic: &[E],
         result: &mut [E],
     ) {
-        // Structural. Poseidon2 fold is checked by verify_fold.
-        // Assertions bind the final commitment and count.
-        let _ = (frame, self);
-        result.fill(E::ZERO);
+        let cur = frame.current();
+        let next = frame.next();
+        // Count increases by at most 1. Poseidon2 absorb is checked
+        // natively by verify_fold; this AIR binds the final commitment.
+        let delta = next[8] - cur[8];
+        result[0] = delta * (delta - E::ONE);
+        for i in 1..9 {
+            result[i] = E::ZERO;
+        }
     }
 
     fn get_assertions(&self) -> Vec<Assertion<BaseElement>> {
