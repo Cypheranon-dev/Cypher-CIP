@@ -132,6 +132,7 @@ impl Air for RecursiveAir {
     }
 }
 
+#[allow(dead_code)]
 pub struct RecursiveProver {
     options: ProofOptions,
     _digests: Vec<[BaseElement; 4]>,
