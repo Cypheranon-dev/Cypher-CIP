@@ -14,7 +14,7 @@ A real circuit would constrain matrix expansion, NTT/INTT, the challenge polynom
 
 **Status: fold only. Not a verifier.**
 
-`verify_fold` uses a domain-separated Poseidon2 absorb (`Poseidon2(acc || digest || DOM_AGG)`). Reordering or omitting a digest changes the commitment. The AIR does not re-execute FRI or attest that the digests came from valid spend proofs. The node must call `verify_bytes` on each spend before folding.
+`verify_fold` uses a domain-separated Poseidon2 absorb (`Poseidon2(acc || digest || DOM_AGG)`). Reordering or omitting a digest changes the commitment. The fold AIR re-executes that absorb and binds the commitment and the count. It does not re-execute FRI, and it does not attest that the digests came from valid spend proofs. The node must call `verify_bytes` on each spend before folding. The digest list is checked by `verify_fold`, not inside the proof.
 
 **Owner decision required:** is a genuine Winterfell verifier circuit a hard launch requirement, or is native individual verification plus a Poseidon2 fold acceptable?
 
@@ -22,7 +22,7 @@ A real circuit would constrain matrix expansion, NTT/INTT, the challenge polynom
 
 **Status: partial.**
 
-Peers exchange hellos with a network identifier, request blocks by work, and accept a signed announcement that is structure-checked. There is no peer discovery, no scoring, no ban policy, and no Sybil or eclipse defense. `serve_one` validates announcement structure and id but does not apply the block; the caller must call `chain.consider`.
+Peers exchange hellos with a network identifier. A shorter peer pulls blocks with `GET_BLOCKS`. A taller peer pushes one block with `broadcast`, which completes the hello handshake and then sends a Dilithium2-signed announcement. `serve_one` verifies that signature against the block's coinbase key and applies the block with `append` or `consider`. Scoring and a ban threshold exist for configured peers. There is no peer discovery and no Sybil or eclipse defense. This is authenticated point-to-point testnet transport, not a public gossip network.
 
 **Owner decision required:** is public gossip with Sybil/eclipse defense a launch requirement, or is a private/static-peer testnet the launch scope?
 

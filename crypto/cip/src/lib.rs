@@ -743,12 +743,8 @@ impl Air for CipAir {
         assertions.push(Assertion::single(FEE, 0, self.public.fee));
         assertions.push(Assertion::single(PAYLOAD, 0, self.public.payload));
         assertions.push(Assertion::single(FLAG, 0, self.public.coinbase_flag));
-        for lane in 0..4 {
-            assertions.push(Assertion::single(
-                CHAIN + lane,
-                0,
-                self.public.chain_state[lane],
-            ));
+        for (lane, element) in self.public.chain_state.iter().enumerate() {
+            assertions.push(Assertion::single(CHAIN + lane, 0, *element));
         }
         assert_eq!(assertions.len(), N_ASSERTIONS);
         assertions

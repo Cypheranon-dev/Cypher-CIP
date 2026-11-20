@@ -13,7 +13,7 @@ Cypher is a privacy-first Layer-1. Transfers are proved in a STARK with no trust
 | Area | State |
 | --- | --- |
 | Spend proof | Working at the current tree depth. Production path is fixed-depth. |
-| Fold | Domain-separated absorb. Not a recursive verifier. Each spend is still verified natively. |
+| Fold | Poseidon2 absorb re-executed in the fold AIR, up to five digests. The proof binds the commitment and the count. The digest list is checked natively. Not a recursive verifier. Each spend is still verified natively. |
 | Membership gadget | Standalone. Not wired into the production spend path. |
 | Lite routing AIR | Degree-2 selector routing, 8 levels. Not Poseidon2. Not the production spend. See docs/LITE.md. |
 | Signatures | Outer signature verified outside the proof. In-circuit verification not implemented. |

@@ -1154,12 +1154,31 @@ mod tests {
         for step in 1..=3 {
             ahead.mine_next(20_000 + step * 10).unwrap();
         }
+        let block = ahead.chain.blocks()[0].clone();
         let listener = listen("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
-        let serving = ahead.chain.clone();
+        let mut pushed = Node::open(&infra, &miner, 7, [[0; 4]; LEAVES], 0)
+            .unwrap()
+            .chain;
         let server = std::thread::spawn(move || {
             let (mut socket, _) = listener.accept().unwrap();
-            serve_one(&mut socket, &serving).unwrap();
+            serve_one(&mut socket, &mut pushed).unwrap();
+            pushed
+        });
+        ahead.add_peer(address.to_string());
+        let results = ahead.broadcast(&block);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].1, "sent");
+        let pushed = server.join().unwrap();
+        assert_eq!(pushed.height(), 1);
+        assert_eq!(pushed.tip(), crate::block_id(&block));
+
+        let listener = listen("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let mut serving = ahead.chain.clone();
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            serve_one(&mut socket, &mut serving).unwrap();
         });
         let mut behind = Node::open(&infra, &miner, 9, [[0; 4]; LEAVES], 0).unwrap();
         let mut socket = TcpStream::connect(address).unwrap();
@@ -1171,10 +1190,10 @@ mod tests {
         behind.mine_next(20_100).unwrap();
         let listener = listen("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
-        let serving = behind.chain.clone();
+        let mut serving = behind.chain.clone();
         let server = std::thread::spawn(move || {
             let (mut socket, _) = listener.accept().unwrap();
-            serve_one(&mut socket, &serving).unwrap();
+            serve_one(&mut socket, &mut serving).unwrap();
         });
         let mut socket = TcpStream::connect(address).unwrap();
         exchange(&mut socket, &mut ahead.chain).unwrap();
