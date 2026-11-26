@@ -17,7 +17,7 @@ Cypher is a privacy-first Layer-1. Transfers are proved in a STARK with no trust
 | Membership gadget | Production `CipAir` constrains a depth-3 Poseidon path (`boundaries` + `parent`). `padded_path` is a separate linear mux and is not that path. See docs/DEPTH4.md. |
 | Lite routing AIR | Degree-2 selector routing, 8 levels. Not Poseidon2. Not the production spend. See docs/LITE.md. |
 | Signatures | Outer signature verified outside the proof. In-circuit verification not implemented. |
-| Network | Private-testnet announcements: version, network id, signature over network id and block id, one block, replay of a known id, then `append` or `consider`. No peer discovery and no Sybil or eclipse defense. |
+| Network | Private-testnet announcements: version, network id, signature over network id and block id, one block, replay of a known id, then `append` or `consider`. Configured peers are capped at two per IPv4 /24 or IPv6 /64. Banned peers are not dialed. No peer discovery and no Sybil or eclipse defense. |
 | Encryption | Authenticated encryption on notes. |
 | Audit | None. Candidate status only. |
 
@@ -27,7 +27,7 @@ These are under development. Closing them is required before any mainnet conside
 
 1. **In-circuit signature verification.** The node verifies ML-DSA outside the proof. `mldsa_circuit_bind` only checks that a public key opens a Poseidon2 commitment. It does not implement NTT, the challenge polynomial, hints, or norm checks. Full FIPS 204 verification inside a STARK is not implemented.
 2. **Recursive verification.** The fold AIR re-executes a Poseidon2 absorb and binds the final commitment and a constant count. It does not re-execute FRI or an inner AIR. The node still verifies each spend natively.
-3. **Network defenses.** Announcements are versioned, bound to `cypher-testnet-0`, length-capped, and rejected when the block id is already on the chain. Scoring exists. Discovery, diversity, and eclipse resistance are not finished.
+3. **Network defenses.** Announcements are versioned, bound to `cypher-testnet-0`, length-capped, and rejected when the block id is already on the chain. At most two configured peers may share an IPv4 /24 or IPv6 /64, and banned peers are not dialed. Discovery, Sybil resistance, and eclipse resistance are not finished.
 4. **Larger anonymity set.** Production tree is depth 3 (8 leaves). The depth-4 slot map is in docs/DEPTH4.md and is not the production AIR. `padded_path` is not a replacement for `parent()`.
 5. **External audit.** No independent review has been completed.
 

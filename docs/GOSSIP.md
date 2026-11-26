@@ -10,13 +10,14 @@
 - `serve_one` applies a valid announcement with `ingest_announce` (`append` or `consider`).
 - Replay: a block id already on the chain is rejected.
 - Peer score: `note_good` increments (cap 100), `note_bad` decrements by 5.
-- Ban threshold: score below -10.
+- Ban threshold: score below -10. `broadcast` does not dial a banned peer.
 - Connection cap: 32 peers.
+- Diversity cap: at most 2 configured peers in one IPv4 /24 or IPv6 /64. Not eclipse resistance.
 
 ## Not implemented
 
 - Peer discovery or bootstrap.
-- Eclipse resistance (peer diversity by ASN/subnet).
+- Eclipse resistance. A /24 cap does not stop an attacker who can use many subnets.
 - Sybil defense beyond the score (no identity cost).
 - Bandwidth or proof-verification rate limits.
 

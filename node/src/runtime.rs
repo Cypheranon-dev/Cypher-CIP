@@ -377,6 +377,24 @@ fn check_network(hello: &mut Input) -> Result<(), String> {
     Ok(())
 }
 
+/// IPv4 /24 or IPv6 /64 of a `host:port` peer address.
+pub fn subnet_key(addr: &str) -> Result<String, &'static str> {
+    let parsed: std::net::SocketAddr = addr.parse().map_err(|_| "peer address")?;
+    match parsed.ip() {
+        std::net::IpAddr::V4(ip) => {
+            let octets = ip.octets();
+            Ok(format!("v4:{}.{}.{}", octets[0], octets[1], octets[2]))
+        }
+        std::net::IpAddr::V6(ip) => {
+            let segments = ip.segments();
+            Ok(format!(
+                "v6:{:x}:{:x}:{:x}:{:x}",
+                segments[0], segments[1], segments[2], segments[3]
+            ))
+        }
+    }
+}
+
 fn send(stream: &mut TcpStream, tag: u8, payload: &[u8]) -> Result<(), String> {
     stream
         .write_all(&wire::encode_message(tag, payload))
@@ -400,10 +418,29 @@ fn recv(stream: &mut TcpStream) -> Result<(u8, Vec<u8>), String> {
 }
 
 impl Node {
-    pub fn add_peer(&mut self, addr: String) {
-        if !self.peers.contains(&addr) {
-            self.peers.push(addr);
+    /// At most two configured peers may share an IPv4 /24 or an IPv6 /64.
+    /// This is a static-list diversity cap. It is not eclipse resistance:
+    /// an attacker with many subnets still fills the peer set.
+    pub const MAX_PER_SUBNET: usize = 2;
+
+    pub fn add_peer(&mut self, addr: String) -> Result<(), &'static str> {
+        if self.peers.contains(&addr) {
+            return Ok(());
         }
+        if !self.can_accept() {
+            return Err("peer cap");
+        }
+        let key = subnet_key(&addr)?;
+        let same = self
+            .peers
+            .iter()
+            .filter(|peer| subnet_key(peer).ok().as_deref() == Some(key.as_str()))
+            .count();
+        if same >= Self::MAX_PER_SUBNET {
+            return Err("subnet diversity");
+        }
+        self.peers.push(addr);
+        Ok(())
     }
 
     pub fn peers(&self) -> &[String] {
@@ -444,6 +481,10 @@ impl Node {
         let body = encode_announce(block, &self.miner_sk);
         let mut results = Vec::new();
         for peer in &self.peers {
+            if self.is_banned(peer) {
+                results.push((peer.clone(), "banned".into()));
+                continue;
+            }
             let parsed = match peer.parse::<std::net::SocketAddr>() {
                 Ok(addr) => addr,
                 Err(err) => {
@@ -570,5 +611,78 @@ mod announce_tests {
         let body = encode_announce(&block, &miner.secret);
         let err = ingest_announce(&mut node.chain, &body).unwrap_err();
         assert_eq!(err, "replay");
+    }
+}
+
+#[cfg(test)]
+mod peer_diversity_tests {
+    use super::*;
+    use cypher_dilithium::Keypair;
+
+    fn node() -> Node {
+        let infra = Keypair::dilithium5();
+        let miner = Keypair::dilithium2();
+        Node::open(&infra, &miner, 7, [[0; 4]; crate::LEAVES], 0).unwrap()
+    }
+
+    #[test]
+    fn two_peers_in_one_subnet_are_allowed() {
+        let mut node = node();
+        node.add_peer("10.1.2.3:9000".into()).unwrap();
+        node.add_peer("10.1.2.4:9000".into()).unwrap();
+        assert_eq!(node.peers().len(), 2);
+    }
+
+    #[test]
+    fn third_peer_in_same_subnet_is_rejected() {
+        let mut node = node();
+        node.add_peer("10.1.2.3:9000".into()).unwrap();
+        node.add_peer("10.1.2.4:9000".into()).unwrap();
+        assert_eq!(
+            node.add_peer("10.1.2.5:9001".into()).unwrap_err(),
+            "subnet diversity"
+        );
+    }
+
+    #[test]
+    fn a_different_subnet_is_allowed() {
+        let mut node = node();
+        node.add_peer("10.1.2.3:9000".into()).unwrap();
+        node.add_peer("10.1.2.4:9000".into()).unwrap();
+        node.add_peer("10.1.3.5:9000".into()).unwrap();
+        assert_eq!(node.peers().len(), 3);
+    }
+
+    #[test]
+    fn unparseable_peer_is_rejected() {
+        let mut node = node();
+        assert_eq!(
+            node.add_peer("not-an-address".into()).unwrap_err(),
+            "peer address"
+        );
+    }
+
+    #[test]
+    fn banned_peer_is_not_dialed() {
+        let mut node = node();
+        node.add_peer("127.0.0.1:1".into()).unwrap();
+        for _ in 0..3 {
+            node.note_bad("127.0.0.1:1");
+        }
+        assert!(node.is_banned("127.0.0.1:1"));
+        let block = crate::Block {
+            height: 1,
+            prev: [0; 32],
+            timestamp: 1,
+            nonce: 0,
+            indices: Vec::new(),
+            difficulty_bits: 0,
+            transfers: Vec::new(),
+            coinbase: None,
+            coinbase_pk: Vec::new(),
+            coinbase_sig: Vec::new(),
+        };
+        let results = node.broadcast(&block);
+        assert_eq!(results, vec![("127.0.0.1:1".into(), "banned".into())]);
     }
 }
