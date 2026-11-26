@@ -1,10 +1,13 @@
 //! Minimal FRI fold circuit (research prototype).
 //!
-//! Constrains a single degree-respecting projection step on a short trace.
+//! Constrains a single degree-respecting projection step.
 //! folded = e0 + α·e1 + α²·e2 + α³·e3.
 //!
 //! Not a FRI verifier. Does not check Merkle openings, multiple layers,
 //! remainder, transcript, or an inner AIR. Native verification remains required.
+//!
+//! A non-constant counter column is included so the composition polynomial
+//! has the degree Winterfell expects.
 
 use winterfell::crypto::{hashers::Rp64_256, DefaultRandomCoin, MerkleTree};
 use winterfell::math::fields::f64::BaseElement;
@@ -21,14 +24,15 @@ use winterfell::{CompositionPoly, CompositionPolyTrace};
 use crate::proof_options;
 
 const TRACE_LEN: usize = 16;
-const WIDTH: usize = 13;
-const N_CONSTRAINTS: usize = 4;
-const N_ASSERTIONS: usize = 5;
+const WIDTH: usize = 14;
+const N_CONSTRAINTS: usize = 5;
+const N_ASSERTIONS: usize = 6;
 
 const EVALS: usize = 0;
 const ALPHA: usize = 4;
 const FOLDED: usize = 8;
-const COMMIT: usize = 12; // single column for simplicity in this skeleton
+const COMMIT: usize = 12;
+const STEP: usize = 13;
 
 /// Public inputs.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -45,7 +49,7 @@ impl ToElements<BaseElement> for FriMinimalPublic {
     }
 }
 
-/// Build a constant trace that already satisfies the fold.
+/// Build a trace with a constant fold and a non-constant step counter.
 pub fn fill_trace(
     commit: [BaseElement; 4],
     evals: [BaseElement; 4],
@@ -61,19 +65,21 @@ pub fn fill_trace(
     }
 
     let mut rows = vec![[BaseElement::ZERO; WIDTH]; TRACE_LEN];
-    for i in 0..4 {
-        rows[0][EVALS + i] = evals[i];
-        rows[0][FOLDED + i] = folded[i];
+    for row in 0..TRACE_LEN {
+        for i in 0..4 {
+            rows[row][EVALS + i] = evals[i];
+            rows[row][FOLDED + i] = folded[i];
+        }
+        rows[row][ALPHA] = alpha0;
+        rows[row][COMMIT] = commit[0];
+        rows[row][STEP] = BaseElement::new(row as u64);
     }
-    rows[0][ALPHA] = alpha0;
-    // Store commit in a simple way (first lane only for the skeleton)
-    rows[0][COMMIT] = commit[0];
 
     let mut trace = TraceTable::new(WIDTH, TRACE_LEN);
     let first = rows[0];
     trace.fill(
         |row| row.copy_from_slice(&first),
-        |_step, row| row.copy_from_slice(&first),
+        |step, row| row.copy_from_slice(&rows[step + 1]),
     );
     trace
 }
@@ -88,7 +94,6 @@ impl Air for FriMinimalAir {
     type PublicInputs = FriMinimalPublic;
 
     fn new(trace_info: TraceInfo, public: Self::PublicInputs, options: ProofOptions) -> Self {
-        // Degree 1: next = current (constant columns).
         let degrees = vec![TransitionConstraintDegree::new(1); N_CONSTRAINTS];
         Self {
             context: AirContext::new(trace_info, degrees, N_ASSERTIONS, options),
@@ -108,10 +113,12 @@ impl Air for FriMinimalAir {
     ) {
         let cur = frame.current();
         let next = frame.next();
-        // Enforce that the folded columns stay constant.
+        // Folded columns stay constant.
         for lane in 0..4 {
             result[lane] = next[FOLDED + lane] - cur[FOLDED + lane];
         }
+        // Step counter advances by 1.
+        result[4] = next[STEP] - cur[STEP] - E::ONE;
     }
 
     fn get_assertions(&self) -> Vec<Assertion<BaseElement>> {
@@ -120,6 +127,7 @@ impl Air for FriMinimalAir {
             a.push(Assertion::single(FOLDED + i, 0, self.public.folded[i]));
         }
         a.push(Assertion::single(COMMIT, 0, self.public.commit[0]));
+        a.push(Assertion::single(STEP, 0, BaseElement::ZERO));
         a
     }
 }

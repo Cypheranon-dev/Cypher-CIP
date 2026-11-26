@@ -60,7 +60,7 @@ This document describes a minimal outer AIR that constrains a single degree-resp
 ## Implementation note
 
 The skeleton AIR in `crypto/cip/src/fri_minimal.rs` is present and compiles.  
-A constant-trace transition produces a composition polynomial of degree 0, which Winterfell's prover rejects (expected degree = trace_len - 2).  
-A non-constant transition that actually enforces the fold arithmetic is required before the circuit can prove.  
+A non-constant step-counter column is now included so the composition polynomial has the expected degree. Tests pass in release mode.  
+The skeleton now proves and verifies a satisfiable fold and rejects a mismatched public folded value.  
 This is left as the immediate next step. The design and limitations remain as stated above.
 
