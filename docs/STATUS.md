@@ -25,10 +25,10 @@ Cypher is a privacy-first Layer-1. Transfers are proved in a STARK with no trust
 
 These are under development. Closing them is required before any mainnet consideration.
 
-1. **In-circuit signature verification.** The outer signature is checked outside the proof. An in-circuit check is not implemented.
-2. **Recursive verification.** The fold does not re-execute the inner proof. The node still verifies each spend natively.
-3. **Network defenses.** Scoring exists. Discovery, diversity, and eclipse resistance are not finished.
-4. **Larger anonymity set.** The production tree is fixed at the current depth. A padded circuit exists as a standalone gadget and is not the production path.
+1. **In-circuit signature verification.** Outer signature still checked outside the proof. A minimal research binding (`mldsa_circuit_bind`) now checks key commitment + a simple challenge byte. Full FIPS 204 verification inside a STARK is not implemented.
+2. **Recursive verification.** A second-fold helper exists in the minimal FRI skeleton. The fold still does not re-execute an inner FRI/AIR. The node still verifies each spend natively.
+3. **Network defenses.** Announcements are now versioned and length-bounded (1 MiB). Scoring exists. Discovery, diversity, and eclipse resistance are not finished.
+4. **Larger anonymity set.** Production tree remains fixed at depth 3. An optional depth-4 membership check (`production_optional_depth4`) is callable but is not the production path.
 5. **External audit.** No independent review has been completed.
 
 ## Mainnet gates

@@ -22,6 +22,7 @@
 
 pub mod aggregate;
 pub mod dilithium_bind;
+pub mod mldsa_circuit_bind;
 pub mod layout;
 pub mod mldsa;
 pub mod padded_path;

@@ -193,6 +193,16 @@ pub fn exchange(stream: &mut TcpStream, chain: &mut Chain) -> Result<(), String>
 /// Does not apply the block. The caller must call chain.consider.
 pub fn validate_announce(payload: &[u8], miner_pk: &[u8]) -> Result<crate::Block, String> {
     use cypher_dilithium::verify2;
+    // Versioned + length-bounded (Milestone 2 / blocker 3).
+    const ANNOUNCE_VERSION: u8 = 1;
+    const MAX_ANNOUNCE: usize = 1 << 20; // 1 MiB
+    if payload.is_empty() || payload[0] != ANNOUNCE_VERSION {
+        return Err("announce version".into());
+    }
+    if payload.len() > MAX_ANNOUNCE || payload.len() < 37 {
+        return Err("announce length".into());
+    }
+    let payload = &payload[1..]; // drop version
     if payload.len() < 36 {
         return Err("announce short".into());
     }

@@ -257,3 +257,31 @@ mod tests {
         assert!(verify_minimal(proof, public).is_err());
     }
 }
+
+/// Second fold step (research). Applies the same linear combination
+/// to an already-folded value. Not multi-layer FRI.
+pub fn second_fold(folded: [BaseElement; 4], alpha: BaseElement) -> [BaseElement; 4] {
+    let mut out = [BaseElement::ZERO; 4];
+    let mut apow = BaseElement::ONE;
+    for i in 0..4 {
+        for lane in 0..4 {
+            out[lane] += apow * folded[i];
+        }
+        apow *= alpha;
+    }
+    out
+}
+
+#[cfg(test)]
+mod second_fold_tests {
+    use super::*;
+
+    #[test]
+    fn second_fold_is_deterministic() {
+        let folded = [BaseElement::new(1), BaseElement::new(2), BaseElement::new(3), BaseElement::new(4)];
+        let a = second_fold(folded, BaseElement::new(5));
+        let b = second_fold(folded, BaseElement::new(5));
+        assert_eq!(a, b);
+        assert_ne!(a, folded);
+    }
+}

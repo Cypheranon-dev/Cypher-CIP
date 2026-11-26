@@ -73,3 +73,27 @@ mod tests {
         assert!(root != [BaseElement::ZERO; 4]);
     }
 }
+
+/// Optional depth-4 membership that production prepare can call.
+/// Returns Ok only for a correctly ordered depth-4 path.
+/// Production CipAir remains fixed at depth 3.
+pub fn production_optional_depth4(
+    leaf: [BaseElement; 4],
+    siblings: &[[BaseElement; 4]; 4],
+    bits: &[BaseElement; 4],
+) -> Result<[BaseElement; 4], &'static str> {
+    check_depth4(leaf, siblings, bits)
+}
+
+#[cfg(test)]
+mod optional_tests {
+    use super::*;
+
+    #[test]
+    fn optional_depth4_accepts_valid() {
+        let leaf = [BaseElement::new(1); 4];
+        let sibs = [[BaseElement::new(9); 4]; 4];
+        let bits = [BaseElement::ZERO; 4];
+        assert!(production_optional_depth4(leaf, &sibs, &bits).is_ok());
+    }
+}
