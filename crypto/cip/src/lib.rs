@@ -25,6 +25,7 @@ pub mod dilithium_bind;
 pub mod layout;
 pub mod mldsa;
 pub mod padded_path;
+pub mod fri_minimal;
 pub mod poseidon2;
 pub mod recursive;
 pub mod v2;
