@@ -6,19 +6,426 @@
     <title>Cypher Testnet</title>
     <meta
       name="description"
-      content="Private testnet console for CIP-2026. Watch the chain and queue a spend under the research rules."
+      content="Private testnet research console for CIP-2026. Local chain rules, proof parameters, and open blockers. Not mainnet."
     />
-    <meta name="theme-color" content="#05070d" />
+    <meta name="theme-color" content="#050505" />
     <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link
       rel="stylesheet"
       href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Syne:wght@500;600;700&display=swap"
     />
-    <script type="module" crossorigin src="./assets/index-Cni5p7u6.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-B2IK5EF7.css">
+    <style>
+      :root {
+        --bg: #050505;
+        --surface: #10100e;
+        --raised: #17140f;
+        --line: #3a3122;
+        --fg: #f6f1e6;
+        --muted: #b3a790;
+        --yellow: #f5b942;
+        --orange: #e07a2f;
+        --ink: #140e06;
+        --bad: #ffb4a2;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; background: var(--bg); color: var(--fg); }
+      body {
+        font-family: Syne, sans-serif;
+        min-height: 100vh;
+        background:
+          radial-gradient(900px 420px at 90% -10%, rgba(224, 122, 47, 0.16), transparent 55%),
+          radial-gradient(700px 380px at -10% 0%, rgba(245, 185, 66, 0.08), transparent 50%),
+          var(--bg);
+      }
+      button, input, select { font: inherit; color: inherit; }
+      button { cursor: pointer; }
+      .wrap { width: min(1180px, calc(100% - 32px)); margin: 0 auto; padding: 28px 0 64px; }
+      .top { display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; }
+      .kicker { margin: 0; font-family: "IBM Plex Mono", monospace; letter-spacing: 0.18em; text-transform: uppercase; color: var(--yellow); font-size: 12px; }
+      h1 { margin: 6px 0 0; font-size: 40px; line-height: 1; letter-spacing: -0.03em; }
+      .sub { margin: 10px 0 0; max-width: 640px; color: var(--muted); font-size: 15px; line-height: 1.45; }
+      .actions { display: flex; gap: 8px; align-items: center; }
+      .pill, .live {
+        border: 1px solid var(--line);
+        background: var(--surface);
+        border-radius: 999px;
+        padding: 8px 12px;
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 12px;
+      }
+      .live { display: flex; align-items: center; gap: 8px; }
+      .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--yellow); box-shadow: 0 0 0 4px rgba(245, 185, 66, 0.15); }
+      .dot.off { background: #5c5648; box-shadow: none; }
+      .banner {
+        margin-top: 18px;
+        border: 1px solid var(--line);
+        background: linear-gradient(90deg, rgba(245, 185, 66, 0.12), rgba(224, 122, 47, 0.05));
+        border-radius: 14px;
+        padding: 12px 14px;
+        color: var(--fg);
+        font-size: 13px;
+      }
+      .banner strong { color: var(--yellow); }
+      .metrics { margin-top: 16px; display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; }
+      .metric, .card, .leaf, .block, .gate {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+      }
+      .metric { padding: 12px 14px; }
+      .metric span, .label { display: block; color: var(--muted); font-size: 12px; }
+      .metric b { display: block; margin-top: 4px; font-family: "IBM Plex Mono", monospace; font-size: 20px; font-weight: 500; }
+      .metric small { color: var(--muted); font-family: "IBM Plex Mono", monospace; font-size: 11px; }
+      .grid { margin-top: 16px; display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 14px; }
+      .card { padding: 16px; }
+      h2 { margin: 0; font-size: 16px; }
+      .row { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+      .mono { font-family: "IBM Plex Mono", monospace; }
+      .leaves { margin-top: 12px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+      .leaf { padding: 10px; min-width: 0; }
+      .leaf.on { border-color: var(--yellow); background: var(--raised); }
+      .leaf b { display: block; font-size: 11px; color: var(--muted); font-weight: 500; }
+      .leaf em { display: block; margin-top: 4px; font-style: normal; font-family: "IBM Plex Mono", monospace; font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
+      .blocks { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; max-height: 360px; overflow: auto; }
+      .block { width: 100%; text-align: left; padding: 10px 12px; }
+      .block.on { border-color: var(--orange); background: var(--raised); }
+      .note { margin: 10px 0 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+      label { display: block; margin-top: 12px; font-size: 12px; color: var(--muted); }
+      input, select {
+        width: 100%;
+        margin-top: 6px;
+        height: 42px;
+        border-radius: 10px;
+        border: 1px solid var(--line);
+        background: #0a0a09;
+        padding: 0 12px;
+      }
+      .toggle, .primary {
+        margin-top: 12px;
+        width: 100%;
+        height: 42px;
+        border-radius: 10px;
+        border: 1px solid var(--line);
+        background: #0a0a09;
+      }
+      .primary { background: linear-gradient(90deg, var(--yellow), var(--orange)); color: var(--ink); font-weight: 700; border: 0; }
+      .primary:disabled { opacity: 0.4; cursor: not-allowed; }
+      .gates { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+      .gate { padding: 10px 12px; }
+      .pass { color: var(--yellow); }
+      .fail { color: var(--bad); }
+      .ext { color: var(--muted); }
+      table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
+      th, td { text-align: left; padding: 8px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+      th { color: var(--yellow); font-weight: 600; font-size: 12px; }
+      td.mono, th.mono { font-family: "IBM Plex Mono", monospace; }
+      .research { margin-top: 14px; display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 14px; }
+      .warn { color: var(--orange); }
+      @media (max-width: 900px) {
+        h1 { font-size: 32px; }
+        .metrics, .grid, .research { grid-template-columns: 1fr; }
+        .top { flex-direction: column; }
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div class="wrap">
+      <header class="top">
+        <div>
+          <p class="kicker">CIP-2026 · private testnet</p>
+          <h1>Cypher console</h1>
+          <p class="sub">Local research chain for the CIP rules. It does not build a STARK, does not talk to a node, and is not mainnet.</p>
+        </div>
+        <div class="actions">
+          <span class="pill">cypher-testnet-0</span>
+          <button class="live" id="live" type="button" aria-pressed="true"><span class="dot" id="dot"></span><span id="live-label">Simulator live</span></button>
+        </div>
+      </header>
+      <p class="banner"><strong>Not launched.</strong> Production use is blocked. Mainnet is not approved. Figures below are the current research parameters, not a public network.</p>
+      <section class="metrics" id="metrics" aria-label="Chain status"></section>
+      <div class="grid">
+        <section class="card">
+          <div class="row"><h2>Open tree</h2><span class="mono" id="tree-label"></span></div>
+          <div class="leaves" id="leaves"></div>
+          <p class="note">Eight leaves. Depth 3 is the production circuit. Capacity is not the anonymity set.</p>
+          <div id="mempool"></div>
+          <div class="row" style="margin-top:16px"><h2>Recent blocks</h2><span class="mono" id="tip"></span></div>
+          <div class="blocks" id="blocks"></div>
+          <div id="detail"></div>
+        </section>
+        <section class="card">
+          <h2>Queue a spend</h2>
+          <p class="note">The next simulated block seals a queued note only if it is still live. Refs on this page are labels, not Poseidon2 digests.</p>
+          <label>Live note<select id="note"></select></label>
+          <label>Amount out<input id="out" inputmode="numeric" autocomplete="off" /></label>
+          <label>Fee<input id="fee" inputmode="numeric" value="0" autocomplete="off" /></label>
+          <button class="toggle" id="weaken" type="button" aria-pressed="false">Weaken blowup to 4 · off</button>
+          <button class="primary" id="queue" type="button" disabled>Queue spend</button>
+          <p class="note" id="form-note"></p>
+          <h2 style="margin-top:18px">Research gates</h2>
+          <div class="gates" id="gates"></div>
+        </section>
+      </div>
+      <div class="research">
+        <section class="card">
+          <h2>Protocol parameters</h2>
+          <table>
+            <thead><tr><th>Item</th><th>Current research value</th></tr></thead>
+            <tbody id="params"></tbody>
+          </table>
+          <h2 style="margin-top:18px">Subsidy by year</h2>
+          <p class="note">Per block: year 0 is 1,522,069. Later years take floor(previous × 5 / 8). A year is 262,800 blocks. This table is the integer schedule, not a live emission feed.</p>
+          <table>
+            <thead><tr><th>Year</th><th>Per-block subsidy</th></tr></thead>
+            <tbody id="years"></tbody>
+          </table>
+        </section>
+        <section class="card">
+          <h2>Open blockers</h2>
+          <table>
+            <thead><tr><th>Blocker</th><th>State</th></tr></thead>
+            <tbody id="blockers"></tbody>
+          </table>
+          <h2 style="margin-top:18px">What a real spend still requires</h2>
+          <ol class="note">
+            <li>Open the note as Poseidon2 of amount, spend key, rho, and domain 1.</li>
+            <li>Prove under 84 queries, blowup 8, grinding 20, quadratic extension. The statement is note root, nullifier, output, event, height, fee, payload, chain state, and coinbase flag.</li>
+            <li>Sign the proof bytes with Dilithium2. Wrap them in a Dilithium5 M-of-N envelope. Both checks stay outside the STARK.</li>
+            <li>Announce on <span class="mono">cypher-testnet-0</span>: version 1, signature over network id and block id, exactly one block. A known block id is a replay.</li>
+          </ol>
+        </section>
+      </div>
+    </div>
+    <script>
+      const NETWORK = "cypher-testnet-0";
+      const MOD = 2 ** 32;
+      const INITIAL = 1522069;
+      const YEAR = 262800;
+      const OPTIONS = { queries: 84, blowup: 8, grinding: 20, extension: "quadratic" };
+      const DOM = { note: 1, nullifier: 2, event: 4, pk: 8, aggregate: 16 };
+      const GENESIS = Date.UTC(2026, 10, 21, 8, 0, 0);
+
+      const subsidy = (height) => {
+        if (height <= 0) return 0;
+        const year = Math.floor((height - 1) / YEAR);
+        let reward = INITIAL;
+        for (let i = 0; i < year; i += 1) reward = Math.floor((reward * 5) / 8);
+        return reward;
+      };
+      const ref = (parts) => {
+        let hash = 2166136261;
+        const text = parts.join("|");
+        for (let i = 0; i < text.length; i += 1) {
+          hash ^= text.charCodeAt(i);
+          hash = Math.imul(hash, 16777619);
+        }
+        return (hash >>> 0).toString(16).padStart(8, "0");
+      };
+      const emptyTree = () => Array.from({ length: 8 }, () => null);
+      const place = (trees, note) => {
+        let tree = trees[trees.length - 1];
+        let index = tree.findIndex((leaf) => leaf === null);
+        if (index < 0) {
+          trees.push(emptyTree());
+          tree = trees[trees.length - 1];
+          index = 0;
+        }
+        const stored = { ...note, tree: trees.length - 1, index };
+        tree[index] = stored;
+        return stored;
+      };
+      const rootOf = (trees, index) => ref(["root", index, ...(trees[index] ?? emptyTree()).map((leaf) => leaf?.ref ?? "empty")]);
+      const findNote = (chain, id) => {
+        for (const tree of chain.trees) for (const leaf of tree) if (leaf?.ref === id) return leaf;
+        return null;
+      };
+      const liveNotes = (chain) => chain.trees.flatMap((tree) => tree.filter(Boolean));
+      const filled = (chain) => (chain.trees.at(-1) ?? []).filter(Boolean).length;
+      const whole = (value) => {
+        if (!/^\d+$/.test(String(value).trim())) return null;
+        const number = Number(String(value).trim());
+        return Number.isSafeInteger(number) ? number : null;
+      };
+      const gatesFor = (chain, draft) => {
+        const note = findNote(chain, draft.noteRef);
+        const out = whole(draft.amountOut);
+        const fee = whole(draft.fee);
+        const ranged = out !== null && fee !== null && out >= 1 && fee >= 0 && out < MOD && fee < MOD;
+        const conserved = note !== null && out !== null && fee !== null && out + fee === note.amount;
+        return [
+          { id: "network", label: "Network id", detail: NETWORK, state: "pass" },
+          { id: "note", label: "Live note in the depth-3 tree", detail: note ? `Tree ${note.tree + 1} · leaf ${note.index} · ${note.amount.toLocaleString("en-US")}` : "Pick a note the console still holds.", state: note ? "pass" : "fail" },
+          { id: "range", label: "Amounts under 2^32", detail: ranged ? "Output and fee are in range." : "Use whole numbers. Output at least 1. Both under 2^32.", state: ranged ? "pass" : "fail" },
+          { id: "conserve", label: "Conservation: in = out + fee", detail: note && out !== null && fee !== null ? `${note.amount.toLocaleString("en-US")} = ${out.toLocaleString("en-US")} + ${fee.toLocaleString("en-US")}` : "The spent note must equal the output plus the fee.", state: conserved ? "pass" : "fail" },
+          { id: "options", label: "Pinned proof options", detail: draft.weaken ? "Blowup 4 is rejected. verify accepts only 84 queries, blowup 8, grinding 20, quadratic extension." : "84 queries · blowup 8 · grinding 20 · quadratic extension.", state: draft.weaken ? "fail" : "pass" },
+          { id: "stark", label: "Winterfell spend proof", detail: "Not produced here. The node accepts a spend only after prove() under those options.", state: "external" },
+          { id: "sig", label: "Dilithium2 user signature", detail: "Checked outside the STARK, over the proof bytes and public inputs.", state: "external" },
+          { id: "envelope", label: "Dilithium5 envelope", detail: "M-of-N infrastructure signatures. Also outside the proof.", state: "external" },
+        ];
+      };
+      const ready = (gates) => gates.every((gate) => gate.state !== "fail");
+      const queueSpend = (chain, draft) => {
+        const gates = gatesFor(chain, draft);
+        if (!ready(gates)) return { chain, error: gates.find((gate) => gate.state === "fail")?.detail ?? "Rejected." };
+        const note = findNote(chain, draft.noteRef);
+        const out = whole(draft.amountOut);
+        const fee = whole(draft.fee);
+        if (!note || out === null || fee === null) return { chain, error: "Incomplete spend." };
+        if (chain.mempool.some((item) => item.noteRef === note.ref)) return { chain, error: "That note is already queued." };
+        const height = chain.blocks.length + 1;
+        const spend = {
+          ref: ref(["spend", note.ref, out, fee, height]),
+          noteRef: note.ref,
+          tree: note.tree,
+          index: note.index,
+          amountIn: note.amount,
+          amountOut: out,
+          fee,
+          nullifier: ref(["null", DOM.nullifier, note.ref, height]),
+          output: ref(["out", DOM.note, out, note.ref, height]),
+          noteRoot: rootOf(chain.trees, note.tree),
+          eventId: ref(["event", DOM.event, out, height, fee, chain.tip]),
+        };
+        return { chain: { ...chain, mempool: [...chain.mempool, spend] }, error: null };
+      };
+      const applySpend = (trees, spend, height) => {
+        const leaf = trees[spend.tree]?.[spend.index];
+        if (!leaf || leaf.ref !== spend.noteRef) return false;
+        trees[spend.tree][spend.index] = null;
+        place(trees, { ref: spend.output, amount: spend.amountOut, born: height, kind: "output" });
+        return true;
+      };
+      const seal = (chain, time) => {
+        const trees = chain.trees.map((tree) => tree.slice());
+        const spends = [];
+        for (const spend of chain.mempool) if (applySpend(trees, spend, chain.blocks.length + 1)) spends.push(spend);
+        const height = chain.blocks.length + 1;
+        const reward = subsidy(height);
+        place(trees, { ref: ref(["coinbase", height, reward, chain.tip]), amount: reward, born: height, kind: "coinbase" });
+        const id = ref(["block", chain.tip, height, reward, ...spends.map((spend) => spend.ref)]);
+        const block = {
+          height, id, prev: chain.tip, time, reward, spends,
+          fold: spends.length === 0 ? null : ref(["fold", DOM.aggregate, spends.length, ...spends.map((spend) => spend.ref)]),
+        };
+        return { blocks: [...chain.blocks, block].slice(-24), trees, mempool: [], tip: id };
+      };
+      const bootstrap = () => {
+        let chain = { blocks: [], trees: [emptyTree()], mempool: [], tip: "00000000" };
+        for (let i = 0; i < 4; i += 1) chain = seal(chain, GENESIS - (4 - i) * 120000);
+        return chain;
+      };
+
+      const state = {
+        live: true,
+        chain: bootstrap(),
+        selected: 4,
+        draft: { noteRef: null, amountOut: "", fee: "0", weaken: false },
+        notice: "",
+      };
+
+      const clock = (time) => {
+        const date = new Date(time);
+        const pad = (value) => String(value).padStart(2, "0");
+        return `${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())} UTC`;
+      };
+      const el = (id) => document.getElementById(id);
+
+      const render = () => {
+        const chain = state.chain;
+        const next = chain.blocks.length + 1;
+        const metrics = [
+          ["Height", String(chain.blocks.length), "local simulator"],
+          ["Work", String(chain.blocks.length), "1 per block · bits 0"],
+          ["Open tree", `${filled(chain)} / 8`, "depth 3"],
+          ["Trees", String(chain.trees.length), "full tree opens the next"],
+          ["Next subsidy", subsidy(next).toLocaleString("en-US"), `height ${next}`],
+          ["Queued", String(chain.mempool.length), "sealed on the next block"],
+        ];
+        el("metrics").innerHTML = metrics.map(([label, value, hint]) => `<div class="metric"><span>${label}</span><b>${value}</b><small>${hint}</small></div>`).join("");
+        el("tree-label").textContent = `Tree ${chain.trees.length}`;
+        const open = chain.trees.at(-1) ?? [];
+        el("leaves").innerHTML = Array.from({ length: 8 }, (_, index) => {
+          const leaf = open[index];
+          return `<div class="leaf ${leaf ? "on" : ""}"><b>${index}${leaf ? " · " + leaf.kind : ""}</b><em>${leaf ? leaf.amount.toLocaleString("en-US") : "empty"}</em></div>`;
+        }).join("");
+        el("mempool").innerHTML = chain.mempool.length
+          ? `<p class="note">Queued: ${chain.mempool.map((spend) => `${spend.ref} · out ${spend.amountOut.toLocaleString("en-US")} · fee ${spend.fee}`).join("<br>")}</p>`
+          : "";
+        el("tip").textContent = chain.tip;
+        const selected = chain.blocks.find((block) => block.height === state.selected) ?? chain.blocks.at(-1);
+        el("blocks").innerHTML = [...chain.blocks].reverse().map((block) => `<button class="block ${selected?.id === block.id ? "on" : ""}" type="button" data-height="${block.height}"><div class="row"><b class="mono">#${block.height}</b><span class="mono">${clock(block.time)}</span></div><div class="mono note">${block.id}</div><div class="note">Coinbase ${block.reward.toLocaleString("en-US")}${block.spends.length ? ` · ${block.spends.length} spend` : ""}</div></button>`).join("");
+        el("detail").innerHTML = selected ? `<div class="card" style="margin-top:12px"><h2>Block ${selected.height}</h2><p class="note mono">Prev ${selected.prev}<br>Ref ${selected.id}<br>Subsidy ${selected.reward.toLocaleString("en-US")}<br>Fold ${selected.fold ?? "No spends to fold"}</p>${selected.spends.map((spend) => `<p class="note"><span class="mono pass">${spend.ref}</span><br>Nullifier ${spend.nullifier} · output ${spend.output}<br>Root ${spend.noteRoot} · event ${spend.eventId}</p>`).join("") || `<p class="note">Coinbase only.</p>`}<p class="note">Refs are console labels, not Poseidon2. The node fold still absorbs only the first two lanes of each digest.</p></div>` : "";
+
+        const notes = liveNotes(chain);
+        if (!state.draft.noteRef && notes[0]) state.draft.noteRef = notes[0].ref;
+        el("note").innerHTML = notes.map((note) => `<option value="${note.ref}" ${note.ref === state.draft.noteRef ? "selected" : ""}>Tree ${note.tree + 1} · leaf ${note.index} · ${note.amount.toLocaleString("en-US")} · ${note.kind}</option>`).join("");
+        const gates = gatesFor(chain, state.draft);
+        el("gates").innerHTML = gates.map((gate) => `<div class="gate"><div class="row"><b>${gate.label}</b><span class="${gate.state === "pass" ? "pass" : gate.state === "fail" ? "fail" : "ext"} mono">${gate.state === "pass" ? "Pass" : gate.state === "fail" ? "Fail" : "External"}</span></div><p class="note">${gate.detail}</p></div>`).join("");
+        el("queue").disabled = !ready(gates);
+        el("form-note").textContent = state.notice;
+        el("weaken").textContent = `Weaken blowup to 4 · ${state.draft.weaken ? "on" : "off"}`;
+        el("weaken").setAttribute("aria-pressed", String(state.draft.weaken));
+      };
+
+      const params = [
+        ["Field", "Goldilocks. Poseidon2 width 8, alpha 7. 8 full rounds, 22 partial rounds."],
+        ["S-box", "Unsplit x^7. x^3 and x^5 are not permutations here. Periodic flags keep blowup at 8."],
+        ["Spend AIR", "256 rows, width 132. Slots: note, 3 Merkle levels, nullifier, output, event, pad. Root asserted at row 127."],
+        ["Anonymity", "8 leaves, depth 3. Depth 4 is a design only. padded_path is a linear mux, not parent()."],
+        ["Proof options", `${OPTIONS.queries} queries, blowup ${OPTIONS.blowup}, grinding ${OPTIONS.grinding}, ${OPTIONS.extension} extension. Other options are rejected.`],
+        ["Domains", `Note ${DOM.note}. Nullifier ${DOM.nullifier}. Event ${DOM.event}. Public key ${DOM.pk}. Aggregate ${DOM.aggregate}.`],
+        ["Fold", "Poseidon2 absorb, at most five digests. Binds commitment and a constant count. Not a FRI verifier. Each spend is still verified natively."],
+        ["Signatures", "Dilithium2 outside the proof. Dilithium5 M-of-N envelope. In-STARK ML-DSA is not implemented."],
+        ["PoW", "Equihash(48, 5). Not Equihash-512. This console uses bits 0, one unit of work per block."],
+        ["Announce", "Version 1, network id, Dilithium2 over network id || block id, one block, 1 MiB cap, replay of a known id."],
+        ["Peers", "Static list. At most two per IPv4 /24 or IPv6 /64. Banned peers are not dialed. No discovery, Sybil defense, or eclipse defense."],
+        ["Audit", "None. A green console is not a security proof."],
+      ];
+      el("params").innerHTML = params.map(([item, value]) => `<tr><td>${item}</td><td>${value}</td></tr>`).join("");
+      el("years").innerHTML = Array.from({ length: 8 }, (_, year) => {
+        const height = year * YEAR + 1;
+        return `<tr><td class="mono">${year}</td><td class="mono">${subsidy(height).toLocaleString("en-US")}</td></tr>`;
+      }).join("");
+      const blockers = [
+        ["In-circuit ML-DSA", "Not implemented. Key commitment is not FIPS 204 verification."],
+        ["Recursive verifier", "Fold does not re-execute FRI or an inner AIR."],
+        ["Public network", "Subnet cap only. Eclipse and Sybil defense are open."],
+        ["Anonymity set", "Production path is 8 leaves. Live notes, not tree capacity, are the set."],
+        ["External audit", "Not started. Mainnet is not approved."],
+      ];
+      el("blockers").innerHTML = blockers.map(([name, state]) => `<tr><td>${name}</td><td class="warn">${state}</td></tr>`).join("");
+
+      el("live").onclick = () => {
+        state.live = !state.live;
+        el("live").setAttribute("aria-pressed", String(state.live));
+        el("live-label").textContent = state.live ? "Simulator live" : "Paused";
+        el("dot").classList.toggle("off", !state.live);
+      };
+      el("blocks").onclick = (event) => {
+        const button = event.target.closest("button");
+        if (!button) return;
+        state.selected = Number(button.dataset.height);
+        render();
+      };
+      el("note").onchange = (event) => { state.draft.noteRef = event.target.value; render(); };
+      el("out").oninput = (event) => { state.draft.amountOut = event.target.value; render(); };
+      el("fee").oninput = (event) => { state.draft.fee = event.target.value; render(); };
+      el("weaken").onclick = () => { state.draft.weaken = !state.draft.weaken; render(); };
+      el("queue").onclick = () => {
+        const result = queueSpend(state.chain, state.draft);
+        state.chain = result.chain;
+        state.notice = result.error ?? "Queued. The next block seals it if the note is still live.";
+        if (!result.error) state.draft.amountOut = "";
+        render();
+      };
+      setInterval(() => {
+        if (!state.live) return;
+        state.chain = seal(state.chain, Date.now());
+        state.selected = state.chain.blocks.at(-1).height;
+        render();
+      }, 7000);
+      render();
+    </script>
   </body>
 </html>
