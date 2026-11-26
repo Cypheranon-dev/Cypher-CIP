@@ -10,8 +10,7 @@
 use winterfell::math::fields::f64::BaseElement;
 use winterfell::math::FieldElement;
 
-use crate::layout::MAX_DEPTH;
-use crate::padded_path::{pad, walk, Level};
+use crate::padded_path::{pad, walk};
 
 /// Verify a depth-4 membership using the padded walk.
 /// Returns the computed root or an error.
@@ -55,7 +54,7 @@ mod tests {
     #[test]
     fn invalid_depth_rejects() {
         let leaf = [fe(1), fe(2), fe(3), fe(4)];
-        let mut sibs = [[fe(10), fe(0), fe(0), fe(0)]; 4];
+        let sibs = [[fe(10), fe(0), fe(0), fe(0)]; 4];
         // Corrupt by making a later level real (pad will not do this, so
         // we test the walk's ordered-selector rule via a crafted levels).
         let mut levels = pad(&sibs, &[fe(0); 4]);

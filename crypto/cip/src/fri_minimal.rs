@@ -57,22 +57,20 @@ pub fn fill_trace(
 ) -> TraceTable<BaseElement> {
     let mut folded = [BaseElement::ZERO; 4];
     let mut apow = BaseElement::ONE;
-    for i in 0..4 {
-        for lane in 0..4 {
-            folded[lane] += apow * evals[i];
+    for eval in evals {
+        for lane in &mut folded {
+            *lane += apow * eval;
         }
         apow *= alpha0;
     }
 
     let mut rows = vec![[BaseElement::ZERO; WIDTH]; TRACE_LEN];
-    for row in 0..TRACE_LEN {
-        for i in 0..4 {
-            rows[row][EVALS + i] = evals[i];
-            rows[row][FOLDED + i] = folded[i];
-        }
-        rows[row][ALPHA] = alpha0;
-        rows[row][COMMIT] = commit[0];
-        rows[row][STEP] = BaseElement::new(row as u64);
+    for (row_i, row) in rows.iter_mut().enumerate() {
+        row[EVALS..EVALS + 4].copy_from_slice(&evals);
+        row[FOLDED..FOLDED + 4].copy_from_slice(&folded);
+        row[ALPHA] = alpha0;
+        row[COMMIT] = commit[0];
+        row[STEP] = BaseElement::new(row_i as u64);
     }
 
     let mut trace = TraceTable::new(WIDTH, TRACE_LEN);
@@ -138,7 +136,9 @@ pub struct FriMinimalProver {
 
 impl FriMinimalProver {
     fn new() -> Self {
-        Self { options: proof_options() }
+        Self {
+            options: proof_options(),
+        }
     }
 }
 
@@ -263,9 +263,9 @@ mod tests {
 pub fn second_fold(folded: [BaseElement; 4], alpha: BaseElement) -> [BaseElement; 4] {
     let mut out = [BaseElement::ZERO; 4];
     let mut apow = BaseElement::ONE;
-    for i in 0..4 {
-        for lane in 0..4 {
-            out[lane] += apow * folded[i];
+    for value in folded {
+        for lane in &mut out {
+            *lane += apow * value;
         }
         apow *= alpha;
     }
@@ -278,7 +278,12 @@ mod second_fold_tests {
 
     #[test]
     fn second_fold_is_deterministic() {
-        let folded = [BaseElement::new(1), BaseElement::new(2), BaseElement::new(3), BaseElement::new(4)];
+        let folded = [
+            BaseElement::new(1),
+            BaseElement::new(2),
+            BaseElement::new(3),
+            BaseElement::new(4),
+        ];
         let a = second_fold(folded, BaseElement::new(5));
         let b = second_fold(folded, BaseElement::new(5));
         assert_eq!(a, b);

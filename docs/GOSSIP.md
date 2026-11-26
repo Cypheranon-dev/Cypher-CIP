@@ -6,7 +6,9 @@
 
 - Hello with network identifier.
 - Work-based block sync.
-- Announcement structure and id validation.
+- Announcement: version 1, network id, signature over `network id || block id`, exactly one block, 1 MiB cap.
+- `serve_one` applies a valid announcement with `ingest_announce` (`append` or `consider`).
+- Replay: a block id already on the chain is rejected.
 - Peer score: `note_good` increments (cap 100), `note_bad` decrements by 5.
 - Ban threshold: score below -10.
 - Connection cap: 32 peers.
@@ -17,7 +19,6 @@
 - Eclipse resistance (peer diversity by ASN/subnet).
 - Sybil defense beyond the score (no identity cost).
 - Bandwidth or proof-verification rate limits.
-- Announcement application inside `serve_one` (caller must call `chain.consider`).
 
 ## Threat model
 

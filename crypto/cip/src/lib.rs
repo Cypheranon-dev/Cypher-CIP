@@ -22,11 +22,11 @@
 
 pub mod aggregate;
 pub mod dilithium_bind;
-pub mod mldsa_circuit_bind;
+pub mod fri_minimal;
 pub mod layout;
 pub mod mldsa;
+pub mod mldsa_circuit_bind;
 pub mod padded_path;
-pub mod fri_minimal;
 pub mod padded_spend;
 pub mod poseidon2;
 pub mod recursive;
@@ -46,6 +46,7 @@ use winterfell::{
 };
 
 const TRACE_LEN: usize = 256;
+/// Production anonymity capacity. Depth 4 is designed in docs/DEPTH4.md and is not this AIR.
 const DEPTH: usize = 3;
 pub const LEAVES: usize = 8;
 const AMOUNT_BITS: usize = 32;
@@ -853,10 +854,12 @@ pub fn prove(witness: &Witness) -> Result<(Proof, PublicInputs), &'static str> {
     Ok((proof, public))
 }
 
-
 /// Test-only: prove with arbitrary options. Production code must use proof_options().
 #[cfg(test)]
-fn prove_with_options(witness: &Witness, options: ProofOptions) -> Result<(Proof, PublicInputs), &'static str> {
+fn prove_with_options(
+    witness: &Witness,
+    options: ProofOptions,
+) -> Result<(Proof, PublicInputs), &'static str> {
     let prepared = prepare_inner(witness)?;
     let public = prepared.public.clone();
     let mut prover = CipProver::new(prepared);
@@ -963,9 +966,9 @@ mod tests {
         use winterfell::{BatchingMethod, FieldExtension, ProofOptions};
         let pinned = proof_options();
         let weaker = ProofOptions::new(
-            40,   // fewer queries
-            8,    // same blowup (AIR requires >= 8)
-            10,   // less grinding
+            40, // fewer queries
+            8,  // same blowup (AIR requires >= 8)
+            10, // less grinding
             FieldExtension::Quadratic,
             4,
             7,

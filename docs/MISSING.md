@@ -20,9 +20,9 @@ A real circuit would constrain matrix expansion, NTT/INTT, the challenge polynom
 
 ## C. Public gossip network
 
-**Status: partial.**
+**Status: private testnet transport only.**
 
-Peers exchange hellos with a network identifier. A shorter peer pulls blocks with `GET_BLOCKS`. A taller peer pushes one block with `broadcast`, which completes the hello handshake and then sends a Dilithium2-signed announcement. `serve_one` verifies that signature against the block's coinbase key and applies the block with `append` or `consider`. Scoring and a ban threshold exist for configured peers. There is no peer discovery and no Sybil or eclipse defense. This is authenticated point-to-point testnet transport, not a public gossip network.
+`broadcast` and `serve_one` share `encode_announce` / `validate_announce` / `ingest_announce`. The frame is version 1, the network id `cypher-testnet-0`, a Dilithium2 signature over `network id || block id`, and exactly one block. A block id already stored on the receiving chain is rejected as a replay. A block whose `prev` is the tip is passed to `append`; any other block is passed to `consider`, which keeps it only when the candidate chain has strictly more work. There is no peer discovery, no subnet diversity, and no Sybil or eclipse defense.
 
 **Owner decision required:** is public gossip with Sybil/eclipse defense a launch requirement, or is a private/static-peer testnet the launch scope?
 
@@ -36,6 +36,6 @@ An implementing agent cannot certify an external audit. Status stays not audited
 
 **Status: 8 leaves (depth 3). Not raised.**
 
-`boundaries()` uses a fixed array of 7 and overwrites slots 3–5 after the depth loop. Raising depth requires restructuring those slots so Merkle path operations cannot overwrite nullifier, output, or event boundaries. A mainnet set needs depth 20 or more and that circuit change. Effective anonymity depends on how many notes are live, not on tree capacity.
+Production membership is the depth-3 Poseidon path inside `CipAir` (`boundaries` loads siblings, the next slot runs `parent`). `boundaries()` uses a fixed array of 7 and writes nullifier, output, and event into slots 3–5 after the depth loop. `padded_path` is a different linear walk and is not this path. A depth-4 schedule is written in docs/DEPTH4.md and is not implemented. Raising depth changes the trace length or drops the pad slot, and it changes `LEAVES`, genesis, and existing proofs. Effective anonymity depends on how many notes are live, not on tree capacity.
 
 **Owner decision required:** target depth and acceptable proving cost, or retain the eight-leaf limit for launch.

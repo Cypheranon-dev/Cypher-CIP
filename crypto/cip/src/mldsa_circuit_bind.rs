@@ -1,21 +1,16 @@
-//! Minimal in-circuit ML-DSA binding (research).
+//! Public-key commitment helper. Not an in-circuit ML-DSA verifier.
 //!
-//! Full FIPS 204 verification inside a STARK is not implemented.
-//! This module adds a constrained commitment to the public key and a
-//! simple challenge-binding check that the node already performs natively.
-//!
-//! The production spend still verifies the signature outside the proof.
+//! `pk_commitment` is a Poseidon2 digest of key bytes. It does not constrain
+//! NTT, the challenge polynomial, hints, or infinity norms. The node still
+//! runs FIPS 204 verification outside the proof.
 
 use winterfell::math::fields::f64::BaseElement;
-use winterfell::math::FieldElement;
 
 use crate::v2::pk_commitment;
 
-/// In-circuit style check: the public key must open the commitment,
-/// and a simple challenge binding must match.
+/// Check that `pk` opens `expected_commit`. This is not signature verification.
 pub fn circuit_bind_check(
     pk: &[u8],
-    challenge: [u8; 32],
     expected_commit: [BaseElement; 4],
 ) -> Result<(), &'static str> {
     if pk.len() < 32 {
@@ -24,11 +19,6 @@ pub fn circuit_bind_check(
     let commit = pk_commitment(pk)?;
     if commit != expected_commit {
         return Err("commitment mismatch");
-    }
-    // Simple challenge binding: first byte of pk must equal first byte of challenge
-    // for this research prototype. Not a real ML-DSA challenge.
-    if pk[0] != challenge[0] {
-        return Err("challenge bind");
     }
     Ok(())
 }
@@ -42,26 +32,20 @@ mod tests {
     }
 
     #[test]
-    fn matching_pk_and_challenge_pass() {
+    fn matching_key_opens_commitment() {
         let pk = vec![7u8; 40];
-        let challenge = [7u8; 32];
-        let commit = fe_commit(&pk);
-        assert!(circuit_bind_check(&pk, challenge, commit).is_ok());
-    }
-
-    #[test]
-    fn wrong_challenge_fails() {
-        let pk = vec![7u8; 40];
-        let challenge = [8u8; 32];
-        let commit = fe_commit(&pk);
-        assert!(circuit_bind_check(&pk, challenge, commit).is_err());
+        assert!(circuit_bind_check(&pk, fe_commit(&pk)).is_ok());
     }
 
     #[test]
     fn wrong_commit_fails() {
         let pk = vec![7u8; 40];
-        let challenge = [7u8; 32];
-        let bad = [BaseElement::ONE; 4];
-        assert!(circuit_bind_check(&pk, challenge, bad).is_err());
+        let bad = [BaseElement::new(1); 4];
+        assert!(circuit_bind_check(&pk, bad).is_err());
+    }
+
+    #[test]
+    fn short_key_fails() {
+        assert!(circuit_bind_check(&[1u8; 8], [BaseElement::new(0); 4]).is_err());
     }
 }

@@ -36,5 +36,5 @@ Capacity is not effective anonymity. A live set of one note in a depth-20 tree i
 - Unordered selectors are rejected.
 - Depth-3 paths still work via the same pad/walk.
 
-**Production spend AIR remains fixed at depth 3.** This is not yet integrated into `CipAir`. Larger anonymity set is not claimed.
+**Production spend AIR remains fixed at depth 3.** `padded_path::walk` is a linear mux, not `parent()`. It is not integrated into `CipAir`. See docs/DEPTH4.md. Larger anonymity set is not claimed.
 

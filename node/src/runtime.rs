@@ -13,6 +13,8 @@ use crate::wire::{self, Input};
 use crate::{block_reward, mine_block, Block, Chain, Coinbase, Transfer, LEAVES};
 
 pub const NETWORK_ID: &[u8] = b"cypher-testnet-0";
+pub const ANNOUNCE_VERSION: u8 = 1;
+const MAX_ANNOUNCE: usize = 1 << 20;
 pub const HELLO: u8 = 1;
 pub const GET_BLOCKS: u8 = 2;
 pub const ANNOUNCE: u8 = 5;
@@ -188,35 +190,119 @@ pub fn exchange(stream: &mut TcpStream, chain: &mut Chain) -> Result<(), String>
 }
 
 /// Parse and verify a signed block announcement.
-/// Body: block_id (32) || sig_len (u32) || sig || blocks.
-/// Rejects mismatched id, bad signature, or empty payload.
-/// Does not apply the block. The caller must call chain.consider.
+///
+/// Body: version (1) || network id (u32 len || bytes) || block id (32)
+/// || sig_len (u32) || sig || one block.
+/// The signature covers `NETWORK_ID || block_id`, not the id alone.
+/// Does not apply the block and does not check proof-of-work.
 pub fn validate_announce(payload: &[u8], miner_pk: &[u8]) -> Result<crate::Block, String> {
-    use cypher_dilithium::verify2;
-    // Versioned + length-bounded (Milestone 2 / blocker 3).
-    const ANNOUNCE_VERSION: u8 = 1;
-    const MAX_ANNOUNCE: usize = 1 << 20; // 1 MiB
-    if payload.is_empty() || payload[0] != ANNOUNCE_VERSION {
-        return Err("announce version".into());
+    if miner_pk.is_empty() {
+        return Err("announce key".into());
     }
-    if payload.len() > MAX_ANNOUNCE || payload.len() < 37 {
+    let (block, _id) = open_announce(payload, miner_pk)?;
+    Ok(block)
+}
+
+/// Same checks as [`validate_announce`], then append or consider.
+/// Rejects a block id already on this chain before consensus runs.
+pub fn ingest_announce(chain: &mut Chain, payload: &[u8]) -> Result<(), String> {
+    if payload.len() > MAX_ANNOUNCE {
         return Err("announce length".into());
     }
-    let payload = &payload[1..]; // drop version
-    if payload.len() < 36 {
-        return Err("announce short".into());
+    let pk = {
+        let (block, _) = open_announce(payload, &[])?;
+        block.coinbase_pk
+    };
+    let (block, id) = open_announce(payload, &pk)?;
+    if chain
+        .blocks()
+        .iter()
+        .any(|seen| crate::block_id(seen) == id)
+    {
+        return Err("replay".into());
     }
-    let id: [u8; 32] = payload[..32].try_into().unwrap();
-    let sig_len = u32::from_le_bytes(payload[32..36].try_into().unwrap()) as usize;
-    if sig_len > 4096 || 36 + sig_len > payload.len() {
+    if block.prev == chain.tip() {
+        chain.append(block).map_err(|err| err.to_string())?;
+        return Ok(());
+    }
+    let mut next = chain.blocks().to_vec();
+    next.push(block);
+    if !chain.consider(next).map_err(|err| err.to_string())? {
+        return Err("announce rejected".into());
+    }
+    Ok(())
+}
+
+fn signed_announce_message(block_id: &[u8; 32]) -> Vec<u8> {
+    let mut msg = Vec::with_capacity(NETWORK_ID.len() + 32);
+    msg.extend_from_slice(NETWORK_ID);
+    msg.extend_from_slice(block_id);
+    msg
+}
+
+/// Encode one announcement. `sk` is the miner Dilithium2 secret.
+pub fn encode_announce(block: &crate::Block, sk: &[u8]) -> Vec<u8> {
+    use cypher_dilithium::sign2;
+    let id = crate::block_id(block);
+    let sig = sign2(sk, &signed_announce_message(&id));
+    let mut body = Vec::new();
+    body.push(ANNOUNCE_VERSION);
+    body.extend_from_slice(&(NETWORK_ID.len() as u32).to_le_bytes());
+    body.extend_from_slice(NETWORK_ID);
+    body.extend_from_slice(&id);
+    body.extend_from_slice(&(sig.len() as u32).to_le_bytes());
+    body.extend_from_slice(&sig);
+    wire::write_blocks(&mut body, std::slice::from_ref(block));
+    body
+}
+
+fn open_announce(payload: &[u8], miner_pk: &[u8]) -> Result<(crate::Block, [u8; 32]), String> {
+    use cypher_dilithium::verify2;
+    if payload.is_empty() || payload.len() > MAX_ANNOUNCE {
+        return Err("announce length".into());
+    }
+    if payload[0] != ANNOUNCE_VERSION {
+        return Err("announce version".into());
+    }
+    let mut at = 1usize;
+    let take = |at: &mut usize, n: usize| -> Result<&[u8], String> {
+        let end = at.checked_add(n).ok_or("announce short")?;
+        if end > payload.len() {
+            return Err("announce short".into());
+        }
+        let slice = &payload[*at..end];
+        *at = end;
+        Ok(slice)
+    };
+    let net_len =
+        u32::from_le_bytes(take(&mut at, 4)?.try_into().map_err(|_| "announce short")?) as usize;
+    if net_len > 64 {
+        return Err("wrong network".into());
+    }
+    let network = take(&mut at, net_len)?;
+    if network != NETWORK_ID {
+        return Err("wrong network".into());
+    }
+    let id: [u8; 32] = take(&mut at, 32)?
+        .try_into()
+        .map_err(|_| "announce short")?;
+    let sig_len =
+        u32::from_le_bytes(take(&mut at, 4)?.try_into().map_err(|_| "announce short")?) as usize;
+    if sig_len == 0 || sig_len > 4096 {
         return Err("announce sig".into());
     }
-    let sig = &payload[36..36 + sig_len];
-    if !verify2(miner_pk, &id, sig) {
+    let sig = take(&mut at, sig_len)?.to_vec();
+    if miner_pk.is_empty() {
+        // Caller is peeking the block to learn coinbase_pk. Still require a
+        // well-formed frame, but skip the signature until the key is known.
+    } else if !verify2(miner_pk, &signed_announce_message(&id), &sig) {
         return Err("announce signature".into());
     }
-    let mut rest = wire::Input::new(&payload[36 + sig_len..]);
+    let mut rest = wire::Input::new(&payload[at..]);
     let blocks = rest.blocks().map_err(|e| e.to_string())?;
+    if rest.rest() != 0 {
+        return Err("announce trailing".into());
+    }
     if blocks.len() != 1 {
         return Err("announce count".into());
     }
@@ -224,7 +310,7 @@ pub fn validate_announce(payload: &[u8], miner_pk: &[u8]) -> Result<crate::Block
     if crate::block_id(&block) != id {
         return Err("announce id".into());
     }
-    Ok(block)
+    Ok((block, id))
 }
 
 /// Serve one connection. Answer a request for the blocks after `from`,
@@ -250,12 +336,12 @@ pub fn serve_one(stream: &mut TcpStream, chain: &mut Chain) -> Result<(), String
         if tag != ANNOUNCE {
             return Err("expected announce".into());
         }
-        return apply_announce(chain, &payload);
+        return ingest_announce(chain, &payload);
     }
     if remote_height < chain.height() {
         let (tag, payload) = recv(stream)?;
         if tag == ANNOUNCE {
-            return apply_announce(chain, &payload);
+            return ingest_announce(chain, &payload);
         }
         if tag != GET_BLOCKS {
             return Err("expected getblocks".into());
@@ -269,37 +355,6 @@ pub fn serve_one(stream: &mut TcpStream, chain: &mut Chain) -> Result<(), String
         };
         wire::write_blocks(&mut body, slice);
         send(stream, BLOCKS, &body)?;
-    }
-    Ok(())
-}
-
-fn apply_announce(chain: &mut Chain, payload: &[u8]) -> Result<(), String> {
-    if payload.len() < 36 {
-        return Err("announce short".into());
-    }
-    let id: [u8; 32] = payload[..32].try_into().map_err(|_| "announce id")?;
-    let sig_len = u32::from_le_bytes(payload[32..36].try_into().unwrap()) as usize;
-    if sig_len == 0 || sig_len > 4096 || 36 + sig_len > payload.len() {
-        return Err("announce sig".into());
-    }
-    let mut rest = wire::Input::new(&payload[36 + sig_len..]);
-    let blocks = rest.blocks().map_err(|e| e.to_string())?;
-    if blocks.len() != 1 {
-        return Err("announce count".into());
-    }
-    let block = blocks.into_iter().next().unwrap();
-    if crate::block_id(&block) != id {
-        return Err("announce id mismatch".into());
-    }
-    validate_announce(payload, &block.coinbase_pk)?;
-    if block.prev == chain.tip() {
-        chain.append(block).map_err(|err| err.to_string())?;
-        return Ok(());
-    }
-    let mut next = chain.blocks().to_vec();
-    next.push(block);
-    if !chain.consider(next).map_err(|err| err.to_string())? {
-        return Err("announce rejected".into());
     }
     Ok(())
 }
@@ -385,15 +440,8 @@ impl Node {
     /// protocol. Signs the block id. This is authenticated point-to-point
     /// push, not a public gossip network and not Sybil-resistant.
     pub fn broadcast(&self, block: &crate::Block) -> Vec<(String, String)> {
-        use cypher_dilithium::sign2;
         use std::net::TcpStream;
-        let id = crate::block_id(block);
-        let sig = sign2(&self.miner_sk, &id);
-        let mut body = Vec::new();
-        body.extend_from_slice(&id);
-        body.extend_from_slice(&(sig.len() as u32).to_le_bytes());
-        body.extend_from_slice(&sig);
-        wire::write_blocks(&mut body, std::slice::from_ref(block));
+        let body = encode_announce(block, &self.miner_sk);
         let mut results = Vec::new();
         for peer in &self.peers {
             let parsed = match peer.parse::<std::net::SocketAddr>() {
@@ -425,7 +473,102 @@ impl Node {
         results
     }
 
-    pub fn verify_announcement(pk: &[u8], block_id: &[u8], sig: &[u8]) -> bool {
-        cypher_dilithium::verify2(pk, block_id, sig)
+    pub fn verify_announcement(pk: &[u8], block_id: &[u8; 32], sig: &[u8]) -> bool {
+        let mut msg = Vec::with_capacity(NETWORK_ID.len() + 32);
+        msg.extend_from_slice(NETWORK_ID);
+        msg.extend_from_slice(block_id);
+        cypher_dilithium::verify2(pk, &msg, sig)
+    }
+}
+
+#[cfg(test)]
+mod announce_tests {
+    use super::*;
+    use crate::Block;
+    use cypher_dilithium::Keypair;
+
+    fn sample_block(pk: &[u8]) -> Block {
+        Block {
+            height: 1,
+            prev: [9u8; 32],
+            timestamp: 11,
+            nonce: 0,
+            indices: Vec::new(),
+            difficulty_bits: 0,
+            transfers: Vec::new(),
+            coinbase: None,
+            coinbase_pk: pk.to_vec(),
+            coinbase_sig: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn valid_announce_roundtrip() {
+        let kp = Keypair::dilithium2();
+        let block = sample_block(&kp.public);
+        let body = encode_announce(&block, &kp.secret);
+        let got = validate_announce(&body, &kp.public).unwrap();
+        assert_eq!(got, block);
+    }
+
+    #[test]
+    fn tampered_signature_rejected() {
+        let kp = Keypair::dilithium2();
+        let block = sample_block(&kp.public);
+        let mut body = encode_announce(&block, &kp.secret);
+        let sig_at = 1 + 4 + NETWORK_ID.len() + 32 + 4;
+        body[sig_at] ^= 0x01;
+        assert_eq!(
+            validate_announce(&body, &kp.public).unwrap_err(),
+            "announce signature"
+        );
+    }
+
+    #[test]
+    fn wrong_block_id_rejected() {
+        let kp = Keypair::dilithium2();
+        let block = sample_block(&kp.public);
+        let mut body = encode_announce(&block, &kp.secret);
+        // Flip a byte inside the claimed id (after version + net len + network).
+        let id_at = 1 + 4 + NETWORK_ID.len();
+        body[id_at] ^= 0xff;
+        assert!(validate_announce(&body, &kp.public).is_err());
+    }
+
+    #[test]
+    fn wrong_network_rejected() {
+        let kp = Keypair::dilithium2();
+        let block = sample_block(&kp.public);
+        let mut body = encode_announce(&block, &kp.secret);
+        // Network bytes start at offset 5.
+        body[5] ^= 0xff;
+        assert_eq!(
+            validate_announce(&body, &kp.public).unwrap_err(),
+            "wrong network"
+        );
+    }
+
+    #[test]
+    fn wrong_version_rejected() {
+        let kp = Keypair::dilithium2();
+        let block = sample_block(&kp.public);
+        let mut body = encode_announce(&block, &kp.secret);
+        body[0] = 2;
+        assert_eq!(
+            validate_announce(&body, &kp.public).unwrap_err(),
+            "announce version"
+        );
+    }
+
+    #[test]
+    fn replay_of_known_id_rejected() {
+        let infra = Keypair::dilithium5();
+        let miner = Keypair::dilithium2();
+        let mut node = Node::open(&infra, &miner, 7, [[0; 4]; crate::LEAVES], 0).unwrap();
+        node.mine_next(20_000).unwrap();
+        let block = node.chain.blocks()[0].clone();
+        let body = encode_announce(&block, &miner.secret);
+        let err = ingest_announce(&mut node.chain, &body).unwrap_err();
+        assert_eq!(err, "replay");
     }
 }

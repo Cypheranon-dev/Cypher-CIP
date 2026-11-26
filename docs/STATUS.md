@@ -14,10 +14,10 @@ Cypher is a privacy-first Layer-1. Transfers are proved in a STARK with no trust
 | --- | --- |
 | Spend proof | Working at the current tree depth. Production path is fixed-depth. |
 | Fold | Poseidon2 absorb re-executed in the fold AIR, up to five digests. The proof binds the commitment and the count. The digest list is checked natively. Not a recursive verifier. Each spend is still verified natively. |
-| Membership gadget | Standalone. Not wired into the production spend path. |
+| Membership gadget | Production `CipAir` constrains a depth-3 Poseidon path (`boundaries` + `parent`). `padded_path` is a separate linear mux and is not that path. See docs/DEPTH4.md. |
 | Lite routing AIR | Degree-2 selector routing, 8 levels. Not Poseidon2. Not the production spend. See docs/LITE.md. |
 | Signatures | Outer signature verified outside the proof. In-circuit verification not implemented. |
-| Network | Peer scoring and announcement checks present. Public discovery and Sybil defense not finished. |
+| Network | Private-testnet announcements: version, network id, signature over network id and block id, one block, replay of a known id, then `append` or `consider`. No peer discovery and no Sybil or eclipse defense. |
 | Encryption | Authenticated encryption on notes. |
 | Audit | None. Candidate status only. |
 
@@ -25,10 +25,10 @@ Cypher is a privacy-first Layer-1. Transfers are proved in a STARK with no trust
 
 These are under development. Closing them is required before any mainnet consideration.
 
-1. **In-circuit signature verification.** Outer signature still checked outside the proof. A minimal research binding (`mldsa_circuit_bind`) now checks key commitment + a simple challenge byte. Full FIPS 204 verification inside a STARK is not implemented.
-2. **Recursive verification.** A second-fold helper exists in the minimal FRI skeleton. The fold still does not re-execute an inner FRI/AIR. The node still verifies each spend natively.
-3. **Network defenses.** Announcements are now versioned and length-bounded (1 MiB). Scoring exists. Discovery, diversity, and eclipse resistance are not finished.
-4. **Larger anonymity set.** Production tree remains fixed at depth 3. An optional depth-4 membership check (`production_optional_depth4`) is callable but is not the production path.
+1. **In-circuit signature verification.** The node verifies ML-DSA outside the proof. `mldsa_circuit_bind` only checks that a public key opens a Poseidon2 commitment. It does not implement NTT, the challenge polynomial, hints, or norm checks. Full FIPS 204 verification inside a STARK is not implemented.
+2. **Recursive verification.** The fold AIR re-executes a Poseidon2 absorb and binds the final commitment and a constant count. It does not re-execute FRI or an inner AIR. The node still verifies each spend natively.
+3. **Network defenses.** Announcements are versioned, bound to `cypher-testnet-0`, length-capped, and rejected when the block id is already on the chain. Scoring exists. Discovery, diversity, and eclipse resistance are not finished.
+4. **Larger anonymity set.** Production tree is depth 3 (8 leaves). The depth-4 slot map is in docs/DEPTH4.md and is not the production AIR. `padded_path` is not a replacement for `parent()`.
 5. **External audit.** No independent review has been completed.
 
 ## Mainnet gates
