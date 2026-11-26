@@ -27,3 +27,14 @@ Capacity is not effective anonymity. A live set of one note in a depth-20 tree i
 - Historical root is accepted only within the documented window.
 - Reorg reconstructs the same roots.
 - Proof time and size are measured and recorded.
+
+## Padded path integration (Milestone 1B)
+
+`crypto/cip/src/padded_spend.rs` wires the standalone `padded_path` gadget for depth-4 membership checks.
+
+- Valid depth-4 left-child paths compute correctly.
+- Unordered selectors are rejected.
+- Depth-3 paths still work via the same pad/walk.
+
+**Production spend AIR remains fixed at depth 3.** This is not yet integrated into `CipAir`. Larger anonymity set is not claimed.
+
