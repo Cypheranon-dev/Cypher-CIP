@@ -11,3 +11,8 @@
 ## Later
 
 A Winterfell verifier circuit that proves "these N proofs verified" inside one STARK. That AIR is not in this tree. The aggregation layer is the interface it will replace.
+
+## Minimal FRI prototype
+
+See docs/FRI_MINIMAL.md and `crypto/cip/src/fri_minimal.rs`. Research only. Not a recursive verifier.
+
