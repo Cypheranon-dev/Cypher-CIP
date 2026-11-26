@@ -34,3 +34,9 @@ These are under development. Closing them is required before any mainnet conside
 ## Mainnet gates
 
 All blockers above, plus independent audit with critical and high findings resolved, sustained testnet, and explicit release approval. Passing CI is not proof of protocol security.
+
+## Proof parameter policy (Milestone 1C)
+
+`verify` rejects any proof whose Winterfell options do not exactly match `proof_options()`.
+A real negative test constructs a proof with fewer queries and less grinding and confirms rejection.
+

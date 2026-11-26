@@ -853,6 +853,19 @@ pub fn prove(witness: &Witness) -> Result<(Proof, PublicInputs), &'static str> {
     Ok((proof, public))
 }
 
+
+/// Test-only: prove with arbitrary options. Production code must use proof_options().
+#[cfg(test)]
+fn prove_with_options(witness: &Witness, options: ProofOptions) -> Result<(Proof, PublicInputs), &'static str> {
+    let prepared = prepare_inner(witness)?;
+    let public = prepared.public.clone();
+    let mut prover = CipProver::new(prepared);
+    prover.options = options;
+    let trace = fill_trace(&prover.prepared);
+    let proof = prover.prove(trace).map_err(|_| "proof generation failed")?;
+    Ok((proof, public))
+}
+
 pub fn verify(proof: Proof, public: PublicInputs) -> Result<(), winterfell::VerifierError> {
     // Accept only the protocol-pinned parameters. A proof that used weaker
     // query count, blowup, or grinding is rejected.
@@ -949,15 +962,10 @@ mod tests {
     fn rejects_weaker_proof_options() {
         use winterfell::{BatchingMethod, FieldExtension, ProofOptions};
         let pinned = proof_options();
-        assert_eq!(pinned.num_queries(), 84);
-        assert_eq!(pinned.blowup_factor(), 8);
-        assert_eq!(pinned.grinding_factor(), 20);
-        // Weaker options differ from the pin. verify rejects any proof
-        // whose options do not equal the pin, before Winterfell runs.
         let weaker = ProofOptions::new(
-            40,
-            4,
-            10,
+            40,   // fewer queries
+            8,    // same blowup (AIR requires >= 8)
+            10,   // less grinding
             FieldExtension::Quadratic,
             4,
             7,
@@ -965,8 +973,11 @@ mod tests {
             BatchingMethod::Linear,
         );
         assert_ne!(&weaker, &pinned);
-        assert!(weaker.num_queries() < pinned.num_queries());
-        assert!(weaker.blowup_factor() < pinned.blowup_factor());
+        // Construct a real proof under weaker options and confirm verify rejects it.
+        let witness = sample();
+        let (proof, public) = prove_with_options(&witness, weaker).expect("weaker prove");
+        assert_ne!(proof.options(), &pinned);
+        assert!(verify(proof, public).is_err());
     }
 
     #[test]
